@@ -17,10 +17,16 @@ A Node.js application that automatically extracts speech from videos, generates 
 
 - **Node.js** (v16 or higher)
 - **Git** (for cloning whisper.cpp)
-- **Build tools** (make, gcc) for compiling whisper.cpp
+- **Build tools** (make, gcc, cmake) for compiling whisper.cpp
 - **FFmpeg** (optional but recommended for better performance)
 
 ### Platform-specific Requirements
+
+**Ubuntu Server:**
+```bash
+# The ubuntu-setup.sh script will handle all dependencies automatically
+# Just make sure you have root access or sudo privileges
+```
 
 **macOS:**
 ```bash
@@ -34,16 +40,34 @@ brew install ffmpeg
 **Ubuntu/Debian:**
 ```bash
 sudo apt update
-sudo apt install build-essential git ffmpeg
+sudo apt install build-essential git ffmpeg cmake nodejs npm
 ```
 
 **CentOS/RHEL:**
 ```bash
 sudo yum groupinstall "Development Tools"
-sudo yum install git ffmpeg
+sudo yum install git ffmpeg cmake nodejs npm
 ```
 
 ## 🚀 Quick Start
+
+### For Ubuntu Server (Recommended)
+
+1. **Clone and Setup Dependencies**
+   ```bash
+   git clone <your-repo-url>
+   cd VideoToVTT
+   
+   # Run Ubuntu-specific setup (installs all system dependencies)
+   chmod +x ubuntu-setup.sh
+   sudo ./ubuntu-setup.sh
+   
+   # Run main setup (installs whisper.cpp and models)
+   chmod +x setup.sh
+   ./setup.sh
+   ```
+
+### For Other Platforms
 
 1. **Clone and Setup**
    ```bash
@@ -144,7 +168,14 @@ The application uses advanced FFmpeg filters to extract speech-only audio:
 
 ### Common Issues
 
-1. **whisper.cpp not found**
+1. **Ubuntu: cmake not found**
+   ```bash
+   # Run the Ubuntu setup script first
+   sudo ./ubuntu-setup.sh
+   ./setup.sh
+   ```
+
+2. **whisper.cpp not found**
    ```bash
    ./setup.sh
    # or manually:
@@ -152,13 +183,13 @@ The application uses advanced FFmpeg filters to extract speech-only audio:
    cd whisper.cpp && make
    ```
 
-2. **Model not found**
+3. **Model not found**
    ```bash
    cd whisper.cpp
    bash ./models/download-ggml-model.sh medium
    ```
 
-3. **FFmpeg errors**
+4. **FFmpeg errors**
    ```bash
    # Install system FFmpeg for better performance
    # macOS:
@@ -167,10 +198,22 @@ The application uses advanced FFmpeg filters to extract speech-only audio:
    sudo apt install ffmpeg
    ```
 
-4. **LLM connection failed**
+5. **LLM connection failed**
    - Check if your LLM service is running
    - Verify API URL and credentials in `.env`
    - The app will continue with placeholder translations if LLM is unavailable
+
+### Ubuntu Server Specific
+
+If you encounter permission issues:
+```bash
+# Make sure scripts are executable
+chmod +x ubuntu-setup.sh setup.sh
+
+# Run with appropriate privileges
+sudo ./ubuntu-setup.sh  # For system dependencies
+./setup.sh              # For whisper.cpp and models
+```
 
 ### Memory Issues
 

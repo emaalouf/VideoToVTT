@@ -26,9 +26,78 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Detect operating system
+detect_os() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        if command -v apt &> /dev/null; then
+            echo "ubuntu"
+        elif command -v yum &> /dev/null; then
+            echo "centos"
+        else
+            echo "linux"
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    else
+        echo "unknown"
+    fi
+}
+
+# Install system dependencies
+install_dependencies() {
+    local os=$(detect_os)
+    
+    print_status "Detected OS: $os"
+    
+    case $os in
+        ubuntu)
+            print_status "Installing Ubuntu dependencies..."
+            if command -v sudo &> /dev/null; then
+                sudo apt update
+                sudo apt install -y cmake build-essential git curl nodejs npm
+            else
+                apt update
+                apt install -y cmake build-essential git curl nodejs npm
+            fi
+            ;;
+        centos)
+            print_status "Installing CentOS dependencies..."
+            if command -v sudo &> /dev/null; then
+                sudo yum groupinstall -y "Development Tools"
+                sudo yum install -y cmake git curl nodejs npm
+            else
+                yum groupinstall -y "Development Tools"
+                yum install -y cmake git curl nodejs npm
+            fi
+            ;;
+        macos)
+            print_status "macOS detected. Checking for required tools..."
+            if ! command -v git &> /dev/null; then
+                print_warning "Git not found. Please install Xcode Command Line Tools:"
+                print_status "xcode-select --install"
+            fi
+            if ! command -v node &> /dev/null; then
+                print_warning "Node.js not found. Please install Node.js from https://nodejs.org/"
+            fi
+            ;;
+        *)
+            print_warning "Unknown OS. Please ensure the following are installed:"
+            print_status "- git, make, cmake, gcc, node, npm"
+            ;;
+    esac
+}
+
+# Check and install system dependencies
+install_dependencies
+
 # Install Node.js dependencies
 print_status "Installing Node.js dependencies..."
-npm install
+if command -v npm &> /dev/null; then
+    npm install
+else
+    print_error "npm not found. Please install Node.js first."
+    exit 1
+fi
 
 # Check if git is available
 if ! command -v git &> /dev/null; then
@@ -39,6 +108,15 @@ fi
 # Check if make is available (required for whisper.cpp)
 if ! command -v make &> /dev/null; then
     print_error "Make is required but not installed. Please install build tools first."
+    exit 1
+fi
+
+# Check if cmake is available (required for whisper.cpp)
+if ! command -v cmake &> /dev/null; then
+    print_error "CMake is required but not installed. Please install cmake first."
+    print_status "Ubuntu/Debian: sudo apt install cmake"
+    print_status "CentOS/RHEL: sudo yum install cmake"
+    print_status "macOS: brew install cmake"
     exit 1
 fi
 
@@ -55,7 +133,23 @@ if [ ! -d "whisper.cpp" ]; then
         print_success "whisper.cpp compiled successfully!"
     else
         print_error "Failed to compile whisper.cpp"
-        exit 1
+        print_status "Trying alternative build method..."
+        
+        # Try cmake build as fallback
+        mkdir -p build
+        cd build
+        cmake ..
+        make -j $(nproc)
+        
+        if [ $? -eq 0 ]; then
+            print_success "whisper.cpp compiled successfully with cmake!"
+            # Copy the binary to the expected location
+            cp main ../main
+        else
+            print_error "Failed to compile whisper.cpp with both methods"
+            exit 1
+        fi
+        cd ..
     fi
     
     cd ..
@@ -75,6 +169,9 @@ print_status "Downloading Whisper models..."
 if [ ! -f "$MODELS_DIR/ggml-medium.bin" ]; then
     print_status "Downloading medium model (recommended)..."
     cd whisper.cpp
+    
+    # Make sure download script is executable
+    chmod +x ./models/download-ggml-model.sh
     bash ./models/download-ggml-model.sh medium
     cd ..
     
@@ -82,6 +179,18 @@ if [ ! -f "$MODELS_DIR/ggml-medium.bin" ]; then
         print_success "Medium model downloaded successfully!"
     else
         print_error "Failed to download medium model"
+        print_status "Trying manual download..."
+        
+        # Manual download as fallback
+        cd "$MODELS_DIR"
+        curl -L -o ggml-medium.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
+        cd ../../
+        
+        if [ -f "$MODELS_DIR/ggml-medium.bin" ]; then
+            print_success "Medium model downloaded manually!"
+        else
+            print_warning "Could not download medium model. You may need to download it manually."
+        fi
     fi
 else
     print_warning "Medium model already exists. Skipping download."
@@ -124,6 +233,18 @@ else
     print_status "  macOS: brew install ffmpeg"
     print_status "  Ubuntu/Debian: sudo apt install ffmpeg"
     print_status "  CentOS/RHEL: sudo yum install ffmpeg"
+fi
+
+# Test whisper.cpp installation
+print_status "Testing whisper.cpp installation..."
+if [ -f "whisper.cpp/main" ]; then
+    print_success "whisper.cpp main executable found!"
+elif [ -f "whisper.cpp/build/main" ]; then
+    print_success "whisper.cpp main executable found in build directory!"
+    # Copy to expected location
+    cp whisper.cpp/build/main whisper.cpp/main
+else
+    print_warning "whisper.cpp main executable not found. Compilation may have failed."
 fi
 
 print_success "Setup completed successfully!"
