@@ -193,6 +193,9 @@ Translations:`;
 
       console.log(colors.blue(`🔄 Batch translating ${subtitles.length} subtitles to ${targetLanguage.toUpperCase()}...`));
       
+      // Add delay to prevent rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       const response = await this.translator.translateWithOpenRouter(batchPrompt);
       
       // Parse the response into individual translations
@@ -212,6 +215,14 @@ Translations:`;
 
     } catch (error) {
       console.error(colors.red(`❌ Batch translation failed for ${targetLanguage}:`, error.message));
+      
+      // If rate limited, wait longer and try again
+      if (error.message.includes('429')) {
+        console.log(colors.yellow(`⏳ Rate limited, waiting 5 seconds...`));
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        return subtitles.map(subtitle => `[${targetLanguage.toUpperCase()}] ${subtitle}`);
+      }
+      
       // Fallback to individual placeholders
       return subtitles.map(subtitle => `[${targetLanguage.toUpperCase()}] ${subtitle}`);
     }
