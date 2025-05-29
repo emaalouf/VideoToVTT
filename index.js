@@ -318,7 +318,7 @@ class VideoToVTTProcessor {
       await this.uploadCaptionToApiVideo(video.videoId, originalLangCode, originalVtt, filename);
 
       // Translate to other languages
-      const languages = ['ar', 'en', 'fr'];
+      const languages = ['ar', 'en', 'fr', 'es', 'it'];
       const targetLanguages = languages.filter(lang => lang !== originalLangCode);
 
       for (const targetLang of targetLanguages) {
@@ -363,7 +363,9 @@ class VideoToVTTProcessor {
     const codeToName = {
       'ar': 'arabic',
       'en': 'english',
-      'fr': 'french'
+      'fr': 'french',
+      'es': 'spanish',
+      'it': 'italian'
     };
     return codeToName[code] || 'english';
   }
@@ -372,7 +374,9 @@ class VideoToVTTProcessor {
     const languageMap = {
       'arabic': 'ar',
       'english': 'en',
-      'french': 'fr'
+      'french': 'fr',
+      'spanish': 'es',
+      'italian': 'it'
     };
     return languageMap[language] || 'en';
   }

@@ -1,6 +1,6 @@
 # Video-to-VTT Processor
 
-A Node.js application that automatically extracts speech from videos, generates VTT subtitle files, and translates them into multiple languages (Arabic, English, French).
+A Node.js application that automatically extracts speech from videos, generates VTT subtitle files, and translates them into multiple languages (Arabic, English, French, Spanish, Italian).
 
 ## 🌟 Features
 
@@ -8,7 +8,7 @@ A Node.js application that automatically extracts speech from videos, generates 
 - **Speech Extraction**: Uses FFmpeg to extract speech-only audio while reducing background music
 - **Speech-to-Text**: Leverages whisper.cpp for accurate transcription
 - **Language Detection**: Automatically detects the original language of the content
-- **Multi-language Translation**: Supports translation to Arabic, English, and French using local LLMs
+- **Multi-language Translation**: Supports translation to Arabic, English, French, Spanish, and Italian using local LLMs
 - **VTT Generation**: Creates properly formatted WebVTT subtitle files
 - **Caption Upload**: Automatically uploads generated captions back to api.video (optional)
 - **Progress Tracking**: Real-time progress indication with colorful console output
@@ -156,7 +156,9 @@ The application creates VTT files in the output directory:
 output/
 ├── video_title_ar.vtt    # Arabic version
 ├── video_title_en.vtt    # English version
-└── video_title_fr.vtt    # French version
+├── video_title_fr.vtt    # French version
+├── video_title_es.vtt    # Spanish version
+└── video_title_it.vtt    # Italian version
 ```
 
 ## 🎵 Audio Processing
@@ -294,7 +296,7 @@ UPLOAD_CAPTIONS=false
 
 When enabled, the application will:
 1. ✅ Generate VTT files locally (as backup)
-2. ✅ Upload captions to api.video for each language (ar, en, fr)
+2. ✅ Upload captions to api.video for each language (ar, en, fr, es, it)
 3. ✅ Associate captions with the original videos
 4. ✅ Make captions available in the api.video player
 

@@ -97,7 +97,9 @@ export class LLMTranslator {
     const languageNames = {
       'ar': 'Arabic',
       'en': 'English',
-      'fr': 'French'
+      'fr': 'French',
+      'es': 'Spanish',
+      'it': 'Italian'
     };
 
     const targetLangName = languageNames[targetLanguage] || targetLanguage;
@@ -228,7 +230,9 @@ Translation:`;
     const languagePrefixes = {
       'ar': '[AR]',
       'en': '[EN]',
-      'fr': '[FR]'
+      'fr': '[FR]',
+      'es': '[ES]',
+      'it': '[IT]'
     };
 
     const prefix = languagePrefixes[targetLanguage] || `[${targetLanguage.toUpperCase()}]`;
@@ -240,12 +244,18 @@ Translation:`;
 export function detectTextLanguage(text) {
   const arabicPattern = /[\u0600-\u06FF]/;
   const frenchPattern = /[àâäçéèêëïîôöùûüÿæœ]/i;
+  const spanishPattern = /[ñáéíóúü¿¡]/i;
+  const italianPattern = /[àèéìíîòóùú]/i;
   const englishPattern = /^[a-zA-Z\s.,!?'"()-]+$/;
 
   if (arabicPattern.test(text)) {
     return 'ar';
   } else if (frenchPattern.test(text)) {
     return 'fr';
+  } else if (spanishPattern.test(text)) {
+    return 'es';
+  } else if (italianPattern.test(text)) {
+    return 'it';
   } else if (englishPattern.test(text)) {
     return 'en';
   } else {
