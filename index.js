@@ -251,6 +251,45 @@ class VideoToVTTProcessor {
     return translatedLines.join('\n');
   }
 
+  async uploadCaptionToApiVideo(videoId, language, vttContent, filename) {
+    if (!process.env.UPLOAD_CAPTIONS || process.env.UPLOAD_CAPTIONS.toLowerCase() !== 'true') {
+      console.log(colors.yellow(`⏭️  Caption upload disabled for ${language}`));
+      return false;
+    }
+
+    try {
+      console.log(colors.blue(`📤 Uploading ${language} captions to api.video...`));
+      
+      // Create form data for the VTT file upload
+      const FormData = (await import('form-data')).default;
+      const form = new FormData();
+      
+      // Add the VTT file as a buffer
+      form.append('file', Buffer.from(vttContent, 'utf8'), {
+        filename: `${filename}_${language}.vtt`,
+        contentType: 'text/vtt'
+      });
+
+      const response = await axios.post(
+        `${this.baseURL}/videos/${videoId}/captions/${language}`,
+        form,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            ...form.getHeaders()
+          }
+        }
+      );
+
+      console.log(colors.green(`✅ ${language.toUpperCase()} captions uploaded successfully to video ${videoId}`));
+      return true;
+      
+    } catch (error) {
+      console.error(colors.red(`❌ Failed to upload ${language} captions:`), error.response?.data || error.message);
+      return false;
+    }
+  }
+
   async processVideo(video) {
     const filename = this.sanitizeFilename(video.title);
     console.log(colors.magenta(`\n🎬 Processing video: ${video.title}`));
@@ -275,6 +314,9 @@ class VideoToVTTProcessor {
       await fs.writeFile(originalVttPath, originalVtt, 'utf8');
       console.log(colors.green(`✅ Saved original VTT: ${path.basename(originalVttPath)}`));
 
+      // Upload original captions to api.video
+      await this.uploadCaptionToApiVideo(video.videoId, originalLangCode, originalVtt, filename);
+
       // Translate to other languages
       const languages = ['ar', 'en', 'fr'];
       const targetLanguages = languages.filter(lang => lang !== originalLangCode);
@@ -284,6 +326,9 @@ class VideoToVTTProcessor {
         const translatedVttPath = path.join(this.outputDir, `${filename}_${targetLang}.vtt`);
         await fs.writeFile(translatedVttPath, translatedVtt, 'utf8');
         console.log(colors.green(`✅ Saved translated VTT: ${path.basename(translatedVttPath)}`));
+
+        // Upload translated captions to api.video
+        await this.uploadCaptionToApiVideo(video.videoId, targetLang, translatedVtt, filename);
       }
 
       // Clean up temporary files

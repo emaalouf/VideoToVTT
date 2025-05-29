@@ -10,6 +10,7 @@ A Node.js application that automatically extracts speech from videos, generates 
 - **Language Detection**: Automatically detects the original language of the content
 - **Multi-language Translation**: Supports translation to Arabic, English, and French using local LLMs
 - **VTT Generation**: Creates properly formatted WebVTT subtitle files
+- **Caption Upload**: Automatically uploads generated captions back to api.video (optional)
 - **Progress Tracking**: Real-time progress indication with colorful console output
 - **Error Handling**: Robust error handling with graceful fallbacks
 
@@ -97,9 +98,12 @@ Edit the `.env` file to customize your setup:
 # API Configuration
 API_VIDEO_KEY=your_api_video_key_here
 
+# Caption Upload Configuration
+UPLOAD_CAPTIONS=true
+
 # Whisper.cpp Configuration
 WHISPER_CPP_PATH=./whisper.cpp/main
-WHISPER_MODEL_PATH=./whisper.cpp/models/ggml-medium.bin
+WHISPER_MODEL_PATH=./whisper.cpp/models/ggml-base.bin
 
 # Local LLM Configuration (for DeepSeek/Mistral integration)
 LLM_API_URL=http://localhost:11434/api/generate
@@ -272,4 +276,29 @@ If you encounter issues:
 8. **VTT Generation**: Creates properly formatted subtitle files
 9. **Cleanup**: Removes temporary files to save disk space
 
-The entire process is automated with progress tracking and error handling to ensure reliable operation. 
+The entire process is automated with progress tracking and error handling to ensure reliable operation.
+
+## 📤 Caption Upload Feature
+
+The application can automatically upload generated VTT captions directly to your api.video account:
+
+**Enable caption upload:**
+```env
+UPLOAD_CAPTIONS=true
+```
+
+**Disable caption upload (save files locally only):**
+```env
+UPLOAD_CAPTIONS=false
+```
+
+When enabled, the application will:
+1. ✅ Generate VTT files locally (as backup)
+2. ✅ Upload captions to api.video for each language (ar, en, fr)
+3. ✅ Associate captions with the original videos
+4. ✅ Make captions available in the api.video player
+
+**API Endpoint Used:**
+- `POST https://ws.api.video/videos/{videoId}/captions/{language}`
+- Uploads VTT files with proper language codes
+- Requires the same API key used for video fetching 
