@@ -290,11 +290,140 @@ class VideoToVTTProcessor {
     }
   }
 
+  async checkExistingCaptions(videoId) {
+    try {
+      console.log(colors.blue(`🔍 Checking existing captions for video ${videoId}...`));
+      
+      const response = await axios.get(`${this.baseURL}/videos/${videoId}/captions`, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`
+        }
+      });
+
+      const existingCaptions = response.data.data || [];
+      const existingLanguages = existingCaptions.map(caption => caption.srclang);
+      
+      if (existingCaptions.length > 0) {
+        console.log(colors.yellow(`⚠️  Found existing captions: ${existingLanguages.join(', ')}`));
+      } else {
+        console.log(colors.green(`✅ No existing captions found`));
+      }
+      
+      return existingLanguages;
+      
+    } catch (error) {
+      if (error.response?.status === 404) {
+        console.log(colors.green(`✅ No existing captions found`));
+        return [];
+      }
+      console.error(colors.red(`❌ Failed to check existing captions:`), error.response?.data || error.message);
+      return [];
+    }
+  }
+
+  async deleteCaption(videoId, language) {
+    try {
+      console.log(colors.blue(`🗑️  Deleting ${language} caption for video ${videoId}...`));
+      
+      await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`
+        }
+      });
+
+      console.log(colors.green(`✅ ${language.toUpperCase()} caption deleted successfully`));
+      return true;
+      
+    } catch (error) {
+      if (error.response?.status === 404) {
+        console.log(colors.yellow(`⚠️  ${language.toUpperCase()} caption not found (already deleted)`));
+        return true;
+      }
+      console.error(colors.red(`❌ Failed to delete ${language} caption:`), error.response?.data || error.message);
+      return false;
+    }
+  }
+
+  async deleteAllExistingCaptions(videoId, existingLanguages) {
+    if (existingLanguages.length === 0) {
+      return true;
+    }
+
+    console.log(colors.blue(`🗑️  Deleting all existing captions (${existingLanguages.join(', ')})...`));
+    
+    const deletePromises = existingLanguages.map(language => 
+      this.deleteCaption(videoId, language)
+    );
+    
+    const results = await Promise.all(deletePromises);
+    const successCount = results.filter(result => result).length;
+    
+    if (successCount === existingLanguages.length) {
+      console.log(colors.green(`✅ All existing captions deleted successfully`));
+      
+      // Wait a moment for the deletion to fully propagate
+      console.log(colors.cyan(`⏳ Waiting for deletion to complete...`));
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      return true;
+    } else {
+      console.log(colors.yellow(`⚠️  Some captions failed to delete (${successCount}/${existingLanguages.length} successful)`));
+      return false;
+    }
+  }
+
+  async waitForCaptionDeletion(videoId, maxWaitTime = 30000) {
+    const startTime = Date.now();
+    const checkInterval = 2000; // Check every 2 seconds
+    
+    console.log(colors.cyan(`⏳ Verifying caption deletion completion...`));
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      const existingCaptions = await this.checkExistingCaptions(videoId);
+      
+      if (existingCaptions.length === 0) {
+        console.log(colors.green(`✅ Caption deletion confirmed`));
+        return true;
+      }
+      
+      console.log(colors.yellow(`⏳ Still waiting for deletion to complete... (${existingCaptions.join(', ')} remaining)`));
+      await new Promise(resolve => setTimeout(resolve, checkInterval));
+    }
+    
+    console.log(colors.red(`❌ Timeout waiting for caption deletion to complete`));
+    return false;
+  }
+
   async processVideo(video) {
     const filename = this.sanitizeFilename(video.title);
     console.log(colors.magenta(`\n🎬 Processing video: ${video.title}`));
 
     try {
+      // Check for existing captions first (only if upload is enabled)
+      if (process.env.UPLOAD_CAPTIONS && process.env.UPLOAD_CAPTIONS.toLowerCase() === 'true') {
+        const existingCaptions = await this.checkExistingCaptions(video.videoId);
+        
+        if (existingCaptions.length > 0) {
+          if (process.env.REPLACE_EXISTING_CAPTIONS && process.env.REPLACE_EXISTING_CAPTIONS.toLowerCase() === 'true') {
+            console.log(colors.yellow(`🔄 Replacing existing captions...`));
+            
+            // Delete all existing captions
+            const deletionSuccess = await this.deleteAllExistingCaptions(video.videoId, existingCaptions);
+            
+            if (deletionSuccess) {
+              // Wait for deletion to complete
+              await this.waitForCaptionDeletion(video.videoId);
+            } else {
+              console.log(colors.red(`❌ Failed to delete existing captions, skipping upload for ${video.title}`));
+              // Continue with local file generation but skip upload
+            }
+          } else {
+            console.log(colors.yellow(`⏭️  Captions already exist for ${video.title}, skipping upload (set REPLACE_EXISTING_CAPTIONS=true to replace)`));
+            // Continue with local file generation but skip upload
+          }
+        }
+      }
+
       // Download video
       const videoPath = await this.downloadVideo(video);
 

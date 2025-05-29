@@ -11,6 +11,7 @@ A Node.js application that automatically extracts speech from videos, generates 
 - **Multi-language Translation**: Supports translation to Arabic, English, French, Spanish, and Italian using local LLMs
 - **VTT Generation**: Creates properly formatted WebVTT subtitle files
 - **Caption Upload**: Automatically uploads generated captions back to api.video (optional)
+- **Smart Caption Management**: Checks for existing captions and handles replacement automatically
 - **Progress Tracking**: Real-time progress indication with colorful console output
 - **Error Handling**: Robust error handling with graceful fallbacks
 
@@ -100,6 +101,7 @@ API_VIDEO_KEY=your_api_video_key_here
 
 # Caption Upload Configuration
 UPLOAD_CAPTIONS=true
+REPLACE_EXISTING_CAPTIONS=true
 
 # Whisper.cpp Configuration
 WHISPER_CPP_PATH=./whisper.cpp/main
@@ -303,4 +305,58 @@ When enabled, the application will:
 **API Endpoint Used:**
 - `POST https://ws.api.video/videos/{videoId}/captions/{language}`
 - Uploads VTT files with proper language codes
-- Requires the same API key used for video fetching 
+- Requires the same API key used for video fetching
+
+## 🔄 Smart Caption Management
+
+The application includes intelligent caption management to handle existing captions:
+
+### Configuration Options
+
+**Replace existing captions automatically:**
+```env
+REPLACE_EXISTING_CAPTIONS=true
+```
+
+**Skip videos that already have captions:**
+```env
+REPLACE_EXISTING_CAPTIONS=false
+```
+
+### How It Works
+
+1. **Caption Check**: Before processing each video, the application checks for existing captions
+2. **Decision Logic**:
+   - If **no captions exist**: Proceeds with normal processing and upload
+   - If **captions exist** and `REPLACE_EXISTING_CAPTIONS=true`: 
+     - Deletes all existing captions
+     - Waits for deletion to complete
+     - Proceeds with new caption generation and upload
+   - If **captions exist** and `REPLACE_EXISTING_CAPTIONS=false`:
+     - Skips caption upload but still generates local VTT files
+     - Logs a message about existing captions
+
+### Features
+
+- ✅ **Automatic Detection**: Checks all existing caption languages
+- ✅ **Safe Deletion**: Waits for deletion completion before uploading new captions
+- ✅ **Timeout Protection**: 30-second timeout prevents infinite waiting
+- ✅ **Error Handling**: Graceful handling of deletion failures
+- ✅ **Local Backup**: Always generates local VTT files regardless of upload status
+
+### Example Output
+
+```
+🔍 Checking existing captions for video abc123...
+⚠️  Found existing captions: en, fr
+🔄 Replacing existing captions...
+🗑️  Deleting all existing captions (en, fr)...
+✅ EN caption deleted successfully
+✅ FR caption deleted successfully
+✅ All existing captions deleted successfully
+⏳ Waiting for deletion to complete...
+⏳ Verifying caption deletion completion...
+✅ Caption deletion confirmed
+📤 Uploading ar captions to api.video...
+✅ AR captions uploaded successfully to video abc123
+``` 
