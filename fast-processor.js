@@ -374,6 +374,9 @@ Translations:`;
         return;
       }
 
+      // Clean existing captions first to prevent conflicts
+      await this.deleteAllCaptionsForVideo(video.videoId, filename);
+
       // Download and process video (same as before)
       const videoPath = await this.downloadVideo(video);
       const audioPath = path.join(this.tempDir, `${filename}_speech.wav`);
@@ -523,6 +526,43 @@ Translations:`;
     }
   }
 
+  // Delete all existing captions for a video
+  async deleteAllCaptionsForVideo(videoId, filename) {
+    const languages = ['ar', 'en', 'fr', 'es', 'it'];
+    console.log(colors.yellow(`🧹 Cleaning existing captions for: ${filename}`));
+    
+    let deletedCount = 0;
+    for (const language of languages) {
+      try {
+        await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`
+          }
+        });
+        deletedCount++;
+        console.log(colors.green(`  ✅ Deleted ${language.toUpperCase()} caption`));
+      } catch (error) {
+        if (error.response?.status === 404) {
+          // Caption doesn't exist, that's fine
+          console.log(colors.gray(`  ⏭️  ${language.toUpperCase()} caption not found (already clean)`));
+        } else {
+          console.log(colors.red(`  ❌ Failed to delete ${language.toUpperCase()} caption:`, error.response?.data?.detail || error.message));
+        }
+      }
+      
+      // Small delay to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (deletedCount > 0) {
+      console.log(colors.green(`✅ Cleaned ${deletedCount} existing captions`));
+    } else {
+      console.log(colors.gray(`ℹ️  No existing captions found`));
+    }
+    
+    return deletedCount;
+  }
+
   async uploadCaptionToApiVideo(videoId, language, vttContent, filename) {
     if (!process.env.UPLOAD_CAPTIONS || process.env.UPLOAD_CAPTIONS.toLowerCase() !== 'true') {
       return false;
@@ -548,10 +588,42 @@ Translations:`;
         }
       );
 
+      console.log(colors.green(`✅ Uploaded ${language.toUpperCase()} caption`));
       return true;
     } catch (error) {
-      console.error(colors.red(`❌ Failed to upload ${language} captions:`), error.response?.data || error.message);
-      return false;
+      if (error.response?.status === 400 && error.response?.data?.detail?.includes('Caption already exists')) {
+        console.log(colors.yellow(`⚠️  ${language.toUpperCase()} caption exists, deleting and retrying...`));
+        
+        // Delete the existing caption and retry
+        try {
+          await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
+            headers: { 'Authorization': `Bearer ${this.accessToken}` }
+          });
+          
+          // Wait a moment then retry upload
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          await axios.post(
+            `${this.baseURL}/videos/${videoId}/captions/${language}`,
+            form,
+            {
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                ...form.getHeaders()
+              }
+            }
+          );
+          
+          console.log(colors.green(`✅ Uploaded ${language.toUpperCase()} caption (after cleanup)`));
+          return true;
+        } catch (retryError) {
+          console.error(colors.red(`❌ Failed to upload ${language} captions after cleanup:`), retryError.response?.data || retryError.message);
+          return false;
+        }
+      } else {
+        console.error(colors.red(`❌ Failed to upload ${language} captions:`), error.response?.data || error.message);
+        return false;
+      }
     }
   }
 
