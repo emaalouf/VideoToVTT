@@ -11,12 +11,13 @@ export class LLMTranslator {
   }
 
   async translateVTT(vttContent, targetLanguage, sourceLanguage = 'auto') {
-    console.log(colors.blue(`🌐 Translating VTT content to ${targetLanguage}...`));
+    console.log(colors.blue(`🌐 Translating VTT content to ${targetLanguage.toUpperCase()}...`));
 
     try {
       // Parse VTT content
       const vttLines = vttContent.split('\n');
       const translatedLines = [];
+      let subtitleCount = 0;
 
       let currentSubtitle = '';
       let isSubtitleLine = false;
@@ -51,6 +52,9 @@ export class LLMTranslator {
 
         // This is subtitle text - translate it
         if (isSubtitleLine && line !== '') {
+          subtitleCount++;
+          console.log(colors.cyan(`   📝 Subtitle ${subtitleCount} (${targetLanguage.toUpperCase()}): "${line.substring(0, 60)}${line.length > 60 ? '...' : ''}"`));
+          
           const translatedText = await this.translateText(line, targetLanguage, sourceLanguage);
           translatedLines.push(translatedText);
           isSubtitleLine = false;
@@ -60,7 +64,7 @@ export class LLMTranslator {
       }
 
       const translatedVTT = translatedLines.join('\n');
-      console.log(colors.green(`✅ VTT translation to ${targetLanguage} completed`));
+      console.log(colors.green(`✅ VTT translation to ${targetLanguage.toUpperCase()} completed (${subtitleCount} subtitles translated)`));
       return translatedVTT;
 
     } catch (error) {
@@ -73,22 +77,30 @@ export class LLMTranslator {
     if (!text.trim()) return text;
 
     try {
+      console.log(colors.blue(`🔄 Translating to ${targetLanguage.toUpperCase()}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`));
+      
       const prompt = this.createTranslationPrompt(text, targetLanguage, sourceLanguage);
+      
+      let translatedText;
       
       // Try different LLM APIs based on the configured URL
       if (this.apiUrl.includes('ollama')) {
-        return await this.translateWithOllama(prompt);
+        translatedText = await this.translateWithOllama(prompt);
       } else if (this.apiUrl.includes('deepseek')) {
-        return await this.translateWithDeepSeek(prompt);
+        translatedText = await this.translateWithDeepSeek(prompt);
       } else if (this.apiUrl.includes('mistral')) {
-        return await this.translateWithMistral(prompt);
+        translatedText = await this.translateWithMistral(prompt);
       } else {
         // Generic API call
-        return await this.translateWithGenericAPI(prompt);
+        translatedText = await this.translateWithGenericAPI(prompt);
       }
+      
+      console.log(colors.green(`✅ ${targetLanguage.toUpperCase()} Translation: "${translatedText.substring(0, 80)}${translatedText.length > 80 ? '...' : ''}"`));
+      return translatedText;
 
     } catch (error) {
-      console.error(colors.yellow(`⚠️  Translation failed for: "${text.substring(0, 50)}..."`));
+      console.error(colors.red(`❌ Translation failed for ${targetLanguage.toUpperCase()}: "${text.substring(0, 50)}..."`));
+      console.error(colors.red(`   Error: ${error.message}`));
       return text; // Return original text if translation fails
     }
   }

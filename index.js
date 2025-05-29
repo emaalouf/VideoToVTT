@@ -456,11 +456,23 @@ class VideoToVTTProcessor {
       const languages = ['ar', 'en', 'fr', 'es', 'it'];
       const targetLanguages = languages.filter(lang => lang !== originalLangCode);
 
+      console.log(colors.magenta(`🔄 Starting translations for ${targetLanguages.length} languages: ${targetLanguages.map(lang => lang.toUpperCase()).join(', ')}`));
+
       for (const targetLang of targetLanguages) {
+        console.log(colors.blue(`\n🌍 Processing ${this.getLanguageName(targetLang)} (${targetLang.toUpperCase()}) translation...`));
+        
         const translatedVtt = await this.translateVTT(originalVtt, targetLang, originalLangCode);
         const translatedVttPath = path.join(this.outputDir, `${filename}_${targetLang}.vtt`);
         await fs.writeFile(translatedVttPath, translatedVtt, 'utf8');
-        console.log(colors.green(`✅ Saved translated VTT: ${path.basename(translatedVttPath)}`));
+        
+        console.log(colors.green(`✅ Saved ${this.getLanguageName(targetLang)} VTT: ${path.basename(translatedVttPath)}`));
+        
+        // Show a preview of the translated content
+        const previewLines = translatedVtt.split('\n').slice(0, 8);
+        const subtitlePreview = previewLines.find(line => line.length > 10 && !line.includes('-->') && !line.startsWith('WEBVTT'));
+        if (subtitlePreview) {
+          console.log(colors.cyan(`   📖 Preview (${targetLang.toUpperCase()}): "${subtitlePreview.substring(0, 70)}${subtitlePreview.length > 70 ? '...' : ''}"`));
+        }
 
         // Upload translated captions to api.video
         await this.uploadCaptionToApiVideo(video.videoId, targetLang, translatedVtt, filename);
@@ -471,6 +483,14 @@ class VideoToVTTProcessor {
       await fs.remove(audioPath);
 
       console.log(colors.green(`✅ Completed processing: ${video.title}`));
+      
+      // Show summary of generated files
+      const allLanguages = [originalLangCode, ...targetLanguages];
+      console.log(colors.rainbow(`📄 Generated VTT files for ${video.title}:`));
+      allLanguages.forEach(lang => {
+        const langName = this.getLanguageName(lang);
+        console.log(colors.cyan(`   • ${langName} (${lang.toUpperCase()}): ${filename}_${lang}.vtt`));
+      });
 
     } catch (error) {
       console.error(colors.red(`❌ Failed to process ${video.title}:`), error.message);
