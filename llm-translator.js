@@ -5,9 +5,150 @@ import colors from 'colors';
 export class LLMTranslator {
   constructor(config = {}) {
     this.apiUrl = config.apiUrl || process.env.LLM_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
-    this.model = config.model || process.env.LLM_MODEL || 'anthropic/claude-3.5-sonnet';
+    this.model = config.model || process.env.LLM_MODEL || null; // Will be selected dynamically
     this.apiKey = config.apiKey || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
     this.timeout = config.timeout || 60000; // 60 seconds for cloud APIs
+    this.selectedModel = null;
+    this.availableCredits = null;
+    this.modelsList = [];
+  }
+
+  async checkCredits() {
+    try {
+      console.log(colors.blue('💳 Checking OpenRouter credits...'));
+      
+      const response = await axios.get('https://openrouter.ai/api/v1/credits', {
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`
+        }
+      });
+
+      const { total_credits, total_usage } = response.data.data;
+      this.availableCredits = total_credits - total_usage;
+      
+      console.log(colors.green(`✅ Credits Status:`));
+      console.log(colors.cyan(`   💰 Total Credits: ${total_credits}`));
+      console.log(colors.cyan(`   📊 Used Credits: ${total_usage.toFixed(4)}`));
+      console.log(colors.green(`   🎯 Available Credits: ${this.availableCredits.toFixed(4)}`));
+      
+      return this.availableCredits;
+    } catch (error) {
+      console.log(colors.yellow('⚠️  Could not check credits:'), error.message);
+      return null;
+    }
+  }
+
+  async fetchAvailableModels() {
+    try {
+      console.log(colors.blue('🤖 Fetching available models...'));
+      
+      const response = await axios.get('https://openrouter.ai/api/v1/models');
+      this.modelsList = response.data.data;
+      
+      console.log(colors.green(`✅ Found ${this.modelsList.length} available models`));
+      return this.modelsList;
+    } catch (error) {
+      console.log(colors.yellow('⚠️  Could not fetch models:'), error.message);
+      return [];
+    }
+  }
+
+  selectBestModel() {
+    if (this.model) {
+      // If model is explicitly set, use it
+      this.selectedModel = this.model;
+      console.log(colors.cyan(`🎯 Using configured model: ${this.selectedModel}`));
+      return this.selectedModel;
+    }
+
+    if (!this.modelsList.length) {
+      // Fallback to a reliable default
+      this.selectedModel = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+      console.log(colors.yellow(`⚠️  Using fallback model: ${this.selectedModel}`));
+      return this.selectedModel;
+    }
+
+    // Prioritize models based on cost and quality
+    const preferredModels = [
+      // Free models (best choice)
+      'deepseek/deepseek-r1-0528-qwen3-8b:free',
+      'deepseek/deepseek-r1-0528:free',
+      
+      // Very cheap but high quality
+      'deepseek/deepseek-r1-0528-qwen3-8b',
+      'google/gemma-2b-it',
+      'deepseek/deepseek-r1-0528',
+      
+      // Fallback to other good models
+      'meta-llama/llama-3.1-8b-instruct',
+      'openai/gpt-4o-mini',
+      'anthropic/claude-3-haiku'
+    ];
+
+    // Find the first available preferred model
+    for (const preferredModel of preferredModels) {
+      const model = this.modelsList.find(m => m.id === preferredModel);
+      if (model) {
+        this.selectedModel = model.id;
+        const isFree = parseFloat(model.pricing.prompt) === 0 && parseFloat(model.pricing.completion) === 0;
+        const cost = isFree ? 'FREE' : `$${model.pricing.prompt}/1K tokens (prompt), $${model.pricing.completion}/1K tokens (completion)`;
+        
+        console.log(colors.green(`🎯 Selected model: ${model.name}`));
+        console.log(colors.cyan(`   📦 Model ID: ${model.id}`));
+        console.log(colors.cyan(`   💰 Cost: ${cost}`));
+        console.log(colors.cyan(`   📏 Context: ${model.context_length} tokens`));
+        
+        return this.selectedModel;
+      }
+    }
+
+    // If no preferred model found, use the first free model
+    const freeModel = this.modelsList.find(m => 
+      parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0
+    );
+    
+    if (freeModel) {
+      this.selectedModel = freeModel.id;
+      console.log(colors.green(`🎯 Selected free model: ${freeModel.name} (${freeModel.id})`));
+      return this.selectedModel;
+    }
+
+    // Last resort: use the cheapest model
+    const cheapestModel = this.modelsList
+      .filter(m => parseFloat(m.pricing.prompt) > 0 || parseFloat(m.pricing.completion) > 0)
+      .sort((a, b) => (parseFloat(a.pricing.prompt) + parseFloat(a.pricing.completion)) - 
+                      (parseFloat(b.pricing.prompt) + parseFloat(b.pricing.completion)))[0];
+
+    if (cheapestModel) {
+      this.selectedModel = cheapestModel.id;
+      console.log(colors.yellow(`🎯 Selected cheapest model: ${cheapestModel.name} (${cheapestModel.id})`));
+      return this.selectedModel;
+    }
+
+    // Ultimate fallback
+    this.selectedModel = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+    console.log(colors.red(`⚠️  Using ultimate fallback: ${this.selectedModel}`));
+    return this.selectedModel;
+  }
+
+  async initialize() {
+    console.log(colors.rainbow('🚀 Initializing OpenRouter LLM Translator...\n'));
+    
+    if (!this.apiKey) {
+      console.log(colors.red('❌ No OpenRouter API key found!'));
+      return false;
+    }
+
+    // Check credits first
+    await this.checkCredits();
+    
+    // Fetch available models
+    await this.fetchAvailableModels();
+    
+    // Select the best model
+    this.selectBestModel();
+    
+    return true;
   }
 
   async translateVTT(vttContent, targetLanguage, sourceLanguage = 'auto') {
@@ -197,8 +338,10 @@ Translation:`;
       throw new Error('OpenRouter API key is required. Please set OPENROUTER_API_KEY or LLM_API_KEY in your environment.');
     }
 
+    const modelToUse = this.selectedModel || this.model || 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+
     const response = await axios.post(this.apiUrl, {
-      model: this.model,
+      model: modelToUse,
       messages: [
         {
           role: "system",
@@ -221,6 +364,12 @@ Translation:`;
         'X-Title': 'VideoToVTT Processor'
       }
     });
+
+    // Log usage info if available
+    if (response.data.usage) {
+      const { prompt_tokens, completion_tokens, total_tokens } = response.data.usage;
+      console.log(colors.gray(`   📊 Tokens: ${prompt_tokens} prompt + ${completion_tokens} completion = ${total_tokens} total`));
+    }
 
     return response.data.choices[0].message.content.trim();
   }
@@ -259,12 +408,18 @@ Translation:`;
         console.log(colors.red('❌ No API key found. Please set OPENROUTER_API_KEY or LLM_API_KEY in your environment.'));
         return false;
       }
+
+      // Initialize if not already done
+      if (!this.selectedModel) {
+        await this.initialize();
+      }
       
       const testText = await this.translateText('Hello, world!', 'fr', 'en');
       
       if (testText && testText !== 'Hello, world!' && !testText.includes('[FR]')) {
         console.log(colors.green('✅ LLM connection successful!'));
         console.log(colors.cyan(`Test translation: "Hello, world!" → "${testText}"`));
+        console.log(colors.cyan(`Using model: ${this.selectedModel || this.model}`));
         return true;
       } else {
         console.log(colors.yellow('⚠️  LLM responded but translation may not be working correctly'));

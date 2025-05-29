@@ -41,8 +41,15 @@ class VideoToVTTProcessor {
   async initialize() {
     console.log(colors.rainbow('🚀 Initializing Video-to-VTT Processing...\n'));
     
-    // Test LLM connection
-    this.llmAvailable = await this.translator.testConnection();
+    // Initialize LLM translator with credits check and model selection
+    const llmInitialized = await this.translator.initialize();
+    
+    if (llmInitialized) {
+      // Test LLM connection
+      this.llmAvailable = await this.translator.testConnection();
+    } else {
+      this.llmAvailable = false;
+    }
     
     if (!this.llmAvailable) {
       console.log(colors.yellow('⚠️  Continuing with placeholder translations...'));
