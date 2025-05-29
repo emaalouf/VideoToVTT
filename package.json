@@ -1,0 +1,25 @@
+{
+  "name": "videotovtt",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["video", "vtt", "subtitles", "speech-to-text", "whisper"],
+  "author": "",
+  "license": "ISC",
+  "description": "Extract speech from videos and generate VTT files in multiple languages",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "node-webvtt": "^1.9.4",
+    "fs-extra": "^11.1.1",
+    "path": "^0.12.7",
+    "dotenv": "^16.3.1",
+    "cli-progress": "^3.12.0",
+    "colors": "^1.4.0"
+  }
+}
