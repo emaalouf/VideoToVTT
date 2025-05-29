@@ -187,11 +187,26 @@ class VideoToVTTProcessor {
         '--output-dir', this.tempDir
       ];
 
-      const { stdout, stderr } = await execAsync(`"${this.whisperPath}" ${args.join(' ')}`);
+      const command = `"${this.whisperPath}" ${args.join(' ')}`;
+      console.log(colors.cyan(`🔧 Debug: Running command: ${command}`));
+
+      const { stdout, stderr } = await execAsync(command);
+      
+      console.log(colors.cyan(`🔧 Debug: Whisper stdout: ${stdout}`));
+      if (stderr) {
+        console.log(colors.yellow(`🔧 Debug: Whisper stderr: ${stderr}`));
+      }
       
       // Find the generated VTT file
       const audioBasename = path.basename(audioPath, path.extname(audioPath));
       const vttPath = path.join(this.tempDir, `${audioBasename}.vtt`);
+      
+      console.log(colors.cyan(`🔧 Debug: Looking for VTT file at: ${vttPath}`));
+      console.log(colors.cyan(`🔧 Debug: VTT file exists: ${fs.existsSync(vttPath)}`));
+      
+      // List all files in temp directory for debugging
+      const tempFiles = fs.readdirSync(this.tempDir);
+      console.log(colors.cyan(`🔧 Debug: Files in temp directory: ${tempFiles.join(', ')}`));
 
       if (fs.existsSync(vttPath)) {
         const vttContent = await fs.readFile(vttPath, 'utf8');
