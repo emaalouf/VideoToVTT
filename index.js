@@ -179,12 +179,16 @@ class VideoToVTTProcessor {
         throw new Error('Whisper model not found. Please run setup.sh to download the model.');
       }
 
+      // Generate output file path (without extension)
+      const audioBasename = path.basename(audioPath, path.extname(audioPath));
+      const outputPath = path.join(this.tempDir, audioBasename);
+
       const args = [
         '-m', this.modelPath,
         '-f', audioPath,
         '--output-vtt',
         '--language', language === 'auto' ? 'auto' : language,
-        '--output-dir', this.tempDir
+        '-of', outputPath
       ];
 
       const command = `"${this.whisperPath}" ${args.join(' ')}`;
@@ -197,9 +201,8 @@ class VideoToVTTProcessor {
         console.log(colors.yellow(`🔧 Debug: Whisper stderr: ${stderr}`));
       }
       
-      // Find the generated VTT file
-      const audioBasename = path.basename(audioPath, path.extname(audioPath));
-      const vttPath = path.join(this.tempDir, `${audioBasename}.vtt`);
+      // The VTT file will be created as outputPath.vtt
+      const vttPath = `${outputPath}.vtt`;
       
       console.log(colors.cyan(`🔧 Debug: Looking for VTT file at: ${vttPath}`));
       console.log(colors.cyan(`🔧 Debug: VTT file exists: ${fs.existsSync(vttPath)}`));
