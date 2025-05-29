@@ -29,7 +29,7 @@ function start_full_mode() {
     pm2 delete videotovtt-full 2>/dev/null || true
     
     # Start Full Mode
-    pm2 start ecosystem.config.js --only videotovtt-full
+    pm2 start ecosystem.config.cjs --only videotovtt-full
     
     echo -e "${GREEN}✅ Full Mode started successfully!${NC}"
     echo ""
@@ -44,7 +44,7 @@ function start_turbo_mode() {
     # Stop and start Turbo Mode
     pm2 stop videotovtt-turbo 2>/dev/null || true
     pm2 delete videotovtt-turbo 2>/dev/null || true
-    pm2 start ecosystem.config.js --only videotovtt-turbo
+    pm2 start ecosystem.config.cjs --only videotovtt-turbo
     
     echo -e "${GREEN}✅ Turbo Mode started successfully!${NC}"
     echo ""
@@ -59,7 +59,7 @@ function start_balanced_mode() {
     # Stop and start Balanced Mode
     pm2 stop videotovtt-balanced 2>/dev/null || true
     pm2 delete videotovtt-balanced 2>/dev/null || true
-    pm2 start ecosystem.config.js --only videotovtt-balanced
+    pm2 start ecosystem.config.cjs --only videotovtt-balanced
     
     echo -e "${GREEN}✅ Balanced Mode started successfully!${NC}"
     echo ""
