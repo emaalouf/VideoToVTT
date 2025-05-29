@@ -12,6 +12,7 @@ A Node.js application that automatically extracts speech from videos, generates 
 - **VTT Generation**: Creates properly formatted WebVTT subtitle files
 - **Caption Upload**: Automatically uploads generated captions back to api.video (optional)
 - **Smart Caption Management**: Checks for existing captions and handles replacement automatically
+- **Video Management**: Automated deletion of videos uploaded on specific dates (configurable)
 - **Progress Tracking**: Real-time progress indication with colorful console output
 - **Error Handling**: Robust error handling with graceful fallbacks
 
@@ -102,6 +103,9 @@ API_VIDEO_KEY=your_api_video_key_here
 # Caption Upload Configuration
 UPLOAD_CAPTIONS=true
 REPLACE_EXISTING_CAPTIONS=true
+
+# Video Management Configuration
+DELETE_MAY_29_VIDEOS=false
 
 # Whisper.cpp Configuration
 WHISPER_CPP_PATH=./whisper.cpp/main
@@ -306,6 +310,131 @@ When enabled, the application will:
 - `POST https://ws.api.video/videos/{videoId}/captions/{language}`
 - Uploads VTT files with proper language codes
 - Requires the same API key used for video fetching
+
+## 🔄 Smart Caption Management
+
+The application includes intelligent caption management to handle existing captions:
+
+### Configuration Options
+
+**Replace existing captions automatically:**
+```env
+REPLACE_EXISTING_CAPTIONS=true
+```
+
+**Skip videos that already have captions:**
+```env
+REPLACE_EXISTING_CAPTIONS=false
+```
+
+### How It Works
+
+1. **Caption Check**: Before processing each video, the application checks for existing captions
+2. **Decision Logic**:
+   - If **no captions exist**: Proceeds with normal processing and upload
+   - If **captions exist** and `REPLACE_EXISTING_CAPTIONS=true`: 
+     - Deletes all existing captions
+     - Waits for deletion to complete
+     - Proceeds with new caption generation and upload
+   - If **captions exist** and `REPLACE_EXISTING_CAPTIONS=false`:
+     - Skips caption upload but still generates local VTT files
+     - Logs a message about existing captions
+
+### Features
+
+- ✅ **Automatic Detection**: Checks all existing caption languages
+- ✅ **Safe Deletion**: Waits for deletion completion before uploading new captions
+- ✅ **Timeout Protection**: 30-second timeout prevents infinite waiting
+- ✅ **Error Handling**: Graceful handling of deletion failures
+- ✅ **Local Backup**: Always generates local VTT files regardless of upload status
+
+### Example Output
+
+```
+🔍 Checking existing captions for video abc123...
+⚠️  Found existing captions: en, fr
+🔄 Replacing existing captions...
+🗑️  Deleting all existing captions (en, fr)...
+✅ EN caption deleted successfully
+✅ FR caption deleted successfully
+✅ All existing captions deleted successfully
+⏳ Waiting for deletion to complete...
+⏳ Verifying caption deletion completion...
+✅ Caption deletion confirmed
+📤 Uploading ar captions to api.video...
+✅ AR captions uploaded successfully to video abc123
+```
+
+## 🗑️ Video Management & Deletion
+
+The application includes functionality to automatically delete videos uploaded on specific dates during the fetching process.
+
+### Configuration
+
+**Enable deletion of videos uploaded on May 29th:**
+```env
+DELETE_MAY_29_VIDEOS=true
+```
+
+**Disable video deletion (default):**
+```env
+DELETE_MAY_29_VIDEOS=false
+```
+
+### How It Works
+
+1. **Date Filtering**: After fetching all videos, checks each video's upload date
+2. **Identification**: Finds videos uploaded on May 29th (any year)
+3. **Safety Confirmation**: Shows a 5-second countdown before deletion starts
+4. **Batch Deletion**: Deletes identified videos with progress tracking
+5. **Array Cleanup**: Removes deleted videos from processing queue
+
+### Safety Features
+
+- ✅ **Date Validation**: Only targets videos uploaded exactly on May 29th
+- ✅ **Confirmation Period**: 5-second warning before deletion starts
+- ✅ **Progress Tracking**: Shows deletion progress and success/failure counts
+- ✅ **Error Handling**: Continues processing even if some deletions fail
+- ✅ **API Rate Limiting**: 500ms delay between deletions to be nice to the API
+- ✅ **Configurable**: Can be completely disabled via environment variable
+
+### Example Output
+
+```
+📹 Fetching videos from api.video...
+✅ Total videos fetched: 150
+🔍 Checking for videos uploaded on May 29th...
+🚨 Found 3 videos uploaded on May 29th:
+   - Test Video 1 (abc123) - Wed May 29 2024
+   - Demo Content (def456) - Thu May 29 2025
+   - Sample Upload (ghi789) - Tue May 29 2023
+⚠️  DELETION WILL START IN 5 SECONDS...
+   Press Ctrl+C to cancel if this was not intended!
+🗑️  Starting deletion of May 29th videos...
+🗑️  Deleting video: Test Video 1 (abc123)
+✅ Video deleted successfully: Test Video 1
+🗑️  Deleting video: Demo Content (def456)
+✅ Video deleted successfully: Demo Content
+🗑️  Deleting video: Sample Upload (ghi789)
+✅ Video deleted successfully: Sample Upload
+✅ Deletion complete: 3/3 videos deleted
+📊 Remaining videos to process: 147
+```
+
+### ⚠️ Important Warning
+
+**This feature permanently deletes videos from your api.video account!**
+
+- Videos cannot be recovered after deletion
+- Use with extreme caution in production environments
+- Consider testing with `DELETE_MAY_29_VIDEOS=false` first
+- The 5-second countdown allows you to cancel with Ctrl+C if needed
+
+### API Endpoint Used
+
+- `DELETE https://ws.api.video/videos/{videoId}`
+- Requires the same API key used for video fetching
+- Permanent deletion - videos cannot be restored
 
 ## 🔄 Smart Caption Management
 

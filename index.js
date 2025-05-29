@@ -104,6 +104,12 @@ class VideoToVTTProcessor {
     }
 
     console.log(colors.green(`✅ Total videos fetched: ${allVideos.length}`));
+
+    // Check for videos uploaded on May 29th and delete them if configured
+    if (process.env.DELETE_MAY_29_VIDEOS && process.env.DELETE_MAY_29_VIDEOS.toLowerCase() === 'true') {
+      await this.deleteMay29Videos(allVideos);
+    }
+
     return allVideos;
   }
 
@@ -515,6 +521,81 @@ class VideoToVTTProcessor {
       .replace(/[^\w\s\u0600-\u06FF-]/g, '') // Remove special characters except Arabic, hyphens and spaces
       .replace(/\s+/g, '_')     // Replace spaces with underscores
       .substring(0, 100);       // Limit length
+  }
+
+  async deleteVideo(videoId, title) {
+    try {
+      console.log(colors.blue(`🗑️  Deleting video: ${title} (${videoId})`));
+      
+      await axios.delete(`${this.baseURL}/videos/${videoId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`
+        }
+      });
+
+      console.log(colors.green(`✅ Video deleted successfully: ${title}`));
+      return true;
+      
+    } catch (error) {
+      console.error(colors.red(`❌ Failed to delete video ${title}:`), error.response?.data || error.message);
+      return false;
+    }
+  }
+
+  async deleteMay29Videos(allVideos) {
+    console.log(colors.yellow('🔍 Checking for videos uploaded on May 29th...'));
+    
+    // Filter videos uploaded on May 29th (any year)
+    const may29Videos = allVideos.filter(video => {
+      try {
+        const publishedAt = new Date(video.publishedAt || video.createdAt);
+        const month = publishedAt.getMonth() + 1; // getMonth() returns 0-11
+        const day = publishedAt.getDate();
+        
+        return month === 5 && day === 29; // May is month 5, day 29
+      } catch (error) {
+        console.log(colors.yellow(`⚠️  Could not parse date for video: ${video.title}`));
+        return false;
+      }
+    });
+
+    if (may29Videos.length === 0) {
+      console.log(colors.green('✅ No videos found uploaded on May 29th'));
+      return;
+    }
+
+    console.log(colors.red(`🚨 Found ${may29Videos.length} videos uploaded on May 29th:`));
+    may29Videos.forEach(video => {
+      const date = new Date(video.publishedAt || video.createdAt);
+      console.log(colors.cyan(`   - ${video.title} (${video.videoId}) - ${date.toDateString()}`));
+    });
+
+    // Ask for confirmation (in production, you might want to make this automatic)
+    console.log(colors.yellow('⚠️  DELETION WILL START IN 5 SECONDS...'));
+    console.log(colors.yellow('   Press Ctrl+C to cancel if this was not intended!'));
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    // Delete videos with progress tracking
+    console.log(colors.red('🗑️  Starting deletion of May 29th videos...'));
+    
+    let deletedCount = 0;
+    for (const video of may29Videos) {
+      const success = await this.deleteVideo(video.videoId, video.title);
+      if (success) {
+        deletedCount++;
+        // Remove from allVideos array so they don't get processed later
+        const index = allVideos.findIndex(v => v.videoId === video.videoId);
+        if (index > -1) {
+          allVideos.splice(index, 1);
+        }
+      }
+      
+      // Add a small delay between deletions to be nice to the API
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    console.log(colors.green(`✅ Deletion complete: ${deletedCount}/${may29Videos.length} videos deleted`));
+    console.log(colors.green(`📊 Remaining videos to process: ${allVideos.length}`));
   }
 
   async run() {
