@@ -4,10 +4,10 @@ import colors from 'colors';
 
 export class LLMTranslator {
   constructor(config = {}) {
-    this.apiUrl = config.apiUrl || process.env.LLM_API_URL || 'http://localhost:11434/api/generate';
-    this.model = config.model || process.env.LLM_MODEL || 'deepseek-r1:7b';
-    this.apiKey = config.apiKey || process.env.LLM_API_KEY;
-    this.timeout = config.timeout || 30000; // 30 seconds
+    this.apiUrl = config.apiUrl || process.env.LLM_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
+    this.model = config.model || process.env.LLM_MODEL || 'anthropic/claude-3.5-sonnet';
+    this.apiKey = config.apiKey || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
+    this.timeout = config.timeout || 60000; // 60 seconds for cloud APIs
   }
 
   async translateVTT(vttContent, targetLanguage, sourceLanguage = 'auto') {
@@ -84,15 +84,17 @@ export class LLMTranslator {
       let translatedText;
       
       // Try different LLM APIs based on the configured URL
-      if (this.apiUrl.includes('ollama')) {
+      if (this.apiUrl.includes('openrouter')) {
+        translatedText = await this.translateWithOpenRouter(prompt);
+      } else if (this.apiUrl.includes('ollama')) {
         translatedText = await this.translateWithOllama(prompt);
       } else if (this.apiUrl.includes('deepseek')) {
         translatedText = await this.translateWithDeepSeek(prompt);
       } else if (this.apiUrl.includes('mistral')) {
         translatedText = await this.translateWithMistral(prompt);
       } else {
-        // Generic API call
-        translatedText = await this.translateWithGenericAPI(prompt);
+        // Default to OpenRouter-compatible format
+        translatedText = await this.translateWithOpenRouter(prompt);
       }
       
       console.log(colors.green(`✅ ${targetLanguage.toUpperCase()} Translation: "${translatedText.substring(0, 80)}${translatedText.length > 80 ? '...' : ''}"`));
@@ -190,6 +192,39 @@ Translation:`;
     return response.data.choices[0].message.content.trim();
   }
 
+  async translateWithOpenRouter(prompt) {
+    if (!this.apiKey) {
+      throw new Error('OpenRouter API key is required. Please set OPENROUTER_API_KEY or LLM_API_KEY in your environment.');
+    }
+
+    const response = await axios.post(this.apiUrl, {
+      model: this.model,
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional translator. Translate the given text accurately while preserving the original meaning and tone. Return ONLY the translated text without any explanations."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.2,
+      max_tokens: 1000,
+      top_p: 0.9
+    }, {
+      timeout: this.timeout,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+        'HTTP-Referer': 'https://github.com/your-username/VideoToVTT',
+        'X-Title': 'VideoToVTT Processor'
+      }
+    });
+
+    return response.data.choices[0].message.content.trim();
+  }
+
   async translateWithGenericAPI(prompt) {
     const response = await axios.post(this.apiUrl, {
       prompt: prompt,
@@ -220,18 +255,28 @@ Translation:`;
     try {
       console.log(colors.blue('🔍 Testing LLM connection...'));
       
+      if (!this.apiKey) {
+        console.log(colors.red('❌ No API key found. Please set OPENROUTER_API_KEY or LLM_API_KEY in your environment.'));
+        return false;
+      }
+      
       const testText = await this.translateText('Hello, world!', 'fr', 'en');
       
-      if (testText && testText !== 'Hello, world!') {
+      if (testText && testText !== 'Hello, world!' && !testText.includes('[FR]')) {
         console.log(colors.green('✅ LLM connection successful!'));
         console.log(colors.cyan(`Test translation: "Hello, world!" → "${testText}"`));
         return true;
       } else {
         console.log(colors.yellow('⚠️  LLM responded but translation may not be working correctly'));
+        console.log(colors.yellow(`Response: "${testText}"`));
         return false;
       }
     } catch (error) {
       console.log(colors.red('❌ LLM connection failed:'), error.message);
+      if (error.response) {
+        console.log(colors.red(`Status: ${error.response.status}`));
+        console.log(colors.red(`Data: ${JSON.stringify(error.response.data)}`));
+      }
       console.log(colors.yellow('💡 Will use placeholder translations instead'));
       return false;
     }
