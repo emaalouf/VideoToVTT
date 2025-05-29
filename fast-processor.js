@@ -193,10 +193,10 @@ Translations:`;
 
       console.log(colors.blue(`🔄 Batch translating ${subtitles.length} subtitles to ${targetLanguage.toUpperCase()}...`));
       
-      // Add delay to prevent rate limiting
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const response = await this.translator.translateWithOpenRouter(batchPrompt);
+      // Use retry wrapper for OpenRouter API call
+      const response = await this.retryWithBackoff(async () => {
+        return await this.translator.translateWithOpenRouter(batchPrompt);
+      }, `Batch translation to ${targetLanguage.toUpperCase()}`);
       
       // Parse the response into individual translations
       const translations = response.split('\n')
@@ -214,16 +214,8 @@ Translations:`;
       return translations;
 
     } catch (error) {
-      console.error(colors.red(`❌ Batch translation failed for ${targetLanguage}:`, error.message));
-      
-      // If rate limited, wait longer and try again
-      if (error.message.includes('429')) {
-        console.log(colors.yellow(`⏳ Rate limited, waiting 5 seconds...`));
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        return subtitles.map(subtitle => `[${targetLanguage.toUpperCase()}] ${subtitle}`);
-      }
-      
-      // Fallback to individual placeholders
+      console.error(colors.red(`❌ Batch translation failed for ${targetLanguage} after all retries:`, error.message));
+      // Fallback to placeholders
       return subtitles.map(subtitle => `[${targetLanguage.toUpperCase()}] ${subtitle}`);
     }
   }
@@ -367,71 +359,99 @@ Translations:`;
     const filename = this.sanitizeFilename(video.title);
     console.log(colors.magenta(`\n🎬 Fast processing: ${video.title}`));
 
-    try {
-      // Check if already processed
-      if (this.skipExisting && this.isVideoAlreadyProcessed(filename)) {
-        console.log(colors.yellow(`⏭️  Already processed: ${video.title}`));
-        return;
-      }
+    const maxProcessingRetries = 3;
+    let attempt = 1;
 
-      // Clean existing captions first to prevent conflicts
-      await this.deleteAllCaptionsForVideo(video.videoId, filename);
-
-      // Download and process video (same as before)
-      const videoPath = await this.downloadVideo(video);
-      const audioPath = path.join(this.tempDir, `${filename}_speech.wav`);
-      await this.extractSpeechOnlyAudio(videoPath, audioPath);
-      const originalVtt = await this.transcribeWithWhisper(audioPath);
-
-      // Detect language and save original
-      const detectedLanguage = this.detectLanguage(originalVtt, video.title);
-      const originalLangCode = this.getLanguageCode(detectedLanguage);
-      const originalVttPath = path.join(this.outputDir, `${filename}_${originalLangCode}.vtt`);
-      await fs.writeFile(originalVttPath, originalVtt, 'utf8');
-
-      // Fast concurrent translation to all languages
-      const languages = ['ar', 'en', 'fr', 'es', 'it'];
-      const targetLanguages = languages.filter(lang => lang !== originalLangCode);
-
-      console.log(colors.magenta(`🚀 Fast translating to ${targetLanguages.length} languages concurrently...`));
-
-      // Process translations concurrently
-      const translationPromises = targetLanguages.map(async (targetLang) => {
-        try {
-          const translatedVtt = await this.translateVTTFast(originalVtt, targetLang, originalLangCode);
-          const translatedVttPath = path.join(this.outputDir, `${filename}_${targetLang}.vtt`);
-          await fs.writeFile(translatedVttPath, translatedVtt, 'utf8');
-          
-          // Upload to api.video if enabled
-          if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
-            await this.uploadCaptionToApiVideo(video.videoId, targetLang, translatedVtt, filename);
+    while (attempt <= maxProcessingRetries) {
+      try {
+        // Check if already processed and verified
+        if (this.skipExisting && this.isVideoAlreadyProcessed(filename)) {
+          // Double-check with verification
+          const isComplete = await this.verifyVideoProcessing(video, filename);
+          if (isComplete) {
+            console.log(colors.yellow(`⏭️  Already processed and verified: ${video.title}`));
+            return;
+          } else {
+            console.log(colors.yellow(`🔄 Previously processed but incomplete, reprocessing: ${video.title}`));
           }
-          
-          return { language: targetLang, success: true };
-        } catch (error) {
-          console.error(colors.red(`❌ Translation failed for ${targetLang}:`, error.message));
-          return { language: targetLang, success: false, error: error.message };
         }
-      });
 
-      // Wait for all translations to complete
-      const translationResults = await Promise.all(translationPromises);
-      
-      // Upload original caption
-      if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
-        await this.uploadCaptionToApiVideo(video.videoId, originalLangCode, originalVtt, filename);
+        // Clean existing captions first to prevent conflicts
+        await this.deleteAllCaptionsForVideo(video.videoId, filename);
+
+        // Download and process video (same as before)
+        const videoPath = await this.downloadVideo(video);
+        const audioPath = path.join(this.tempDir, `${filename}_speech.wav`);
+        await this.extractSpeechOnlyAudio(videoPath, audioPath);
+        const originalVtt = await this.transcribeWithWhisper(audioPath);
+
+        // Detect language and save original
+        const detectedLanguage = this.detectLanguage(originalVtt, video.title);
+        const originalLangCode = this.getLanguageCode(detectedLanguage);
+        const originalVttPath = path.join(this.outputDir, `${filename}_${originalLangCode}.vtt`);
+        await fs.writeFile(originalVttPath, originalVtt, 'utf8');
+
+        // Fast concurrent translation to all languages
+        const languages = ['ar', 'en', 'fr', 'es', 'it'];
+        const targetLanguages = languages.filter(lang => lang !== originalLangCode);
+
+        console.log(colors.magenta(`🚀 Fast translating to ${targetLanguages.length} languages concurrently...`));
+
+        // Process translations concurrently
+        const translationPromises = targetLanguages.map(async (targetLang) => {
+          try {
+            const translatedVtt = await this.translateVTTFast(originalVtt, targetLang, originalLangCode);
+            const translatedVttPath = path.join(this.outputDir, `${filename}_${targetLang}.vtt`);
+            await fs.writeFile(translatedVttPath, translatedVtt, 'utf8');
+            
+            // Upload to api.video if enabled
+            if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
+              await this.uploadCaptionToApiVideo(video.videoId, targetLang, translatedVtt, filename);
+            }
+            
+            return { language: targetLang, success: true };
+          } catch (error) {
+            console.error(colors.red(`❌ Translation failed for ${targetLang}:`, error.message));
+            return { language: targetLang, success: false, error: error.message };
+          }
+        });
+
+        // Wait for all translations to complete
+        const translationResults = await Promise.all(translationPromises);
+        
+        // Upload original caption
+        if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
+          await this.uploadCaptionToApiVideo(video.videoId, originalLangCode, originalVtt, filename);
+        }
+
+        // Verify processing completion
+        const isComplete = await this.verifyVideoProcessing(video, filename);
+        
+        if (isComplete) {
+          // Clean up temporary files only after verification
+          await fs.remove(videoPath);
+          await fs.remove(audioPath);
+
+          const successCount = translationResults.filter(r => r.success).length;
+          console.log(colors.green(`✅ Fast completed and verified: ${video.title} (${successCount}/${targetLanguages.length} translations successful)`));
+          return; // Success, exit retry loop
+        } else {
+          throw new Error('Video processing verification failed');
+        }
+
+      } catch (error) {
+        console.error(colors.red(`❌ Fast processing attempt ${attempt}/${maxProcessingRetries} failed for ${video.title}:`), error.message);
+        
+        if (attempt === maxProcessingRetries) {
+          console.error(colors.red(`❌ Fast processing FAILED after ${maxProcessingRetries} attempts: ${video.title}`));
+          throw error;
+        } else {
+          const waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff
+          console.log(colors.yellow(`⏳ Retrying in ${waitTime/1000} seconds...`));
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          attempt++;
+        }
       }
-
-      // Clean up temporary files
-      await fs.remove(videoPath);
-      await fs.remove(audioPath);
-
-      const successCount = translationResults.filter(r => r.success).length;
-      console.log(colors.green(`✅ Fast completed: ${video.title} (${successCount}/${targetLanguages.length} translations successful)`));
-
-    } catch (error) {
-      console.error(colors.red(`❌ Fast processing failed for ${video.title}:`), error.message);
-      throw error;
     }
   }
 
@@ -534,11 +554,14 @@ Translations:`;
     let deletedCount = 0;
     for (const language of languages) {
       try {
-        await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`
-          }
-        });
+        await this.retryWithBackoff(async () => {
+          await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`
+            }
+          });
+        }, `Delete ${language.toUpperCase()} caption`);
+        
         deletedCount++;
         console.log(colors.green(`  ✅ Deleted ${language.toUpperCase()} caption`));
       } catch (error) {
@@ -546,12 +569,12 @@ Translations:`;
           // Caption doesn't exist, that's fine
           console.log(colors.gray(`  ⏭️  ${language.toUpperCase()} caption not found (already clean)`));
         } else {
-          console.log(colors.red(`  ❌ Failed to delete ${language.toUpperCase()} caption:`, error.response?.data?.detail || error.message));
+          console.log(colors.red(`  ❌ Failed to delete ${language.toUpperCase()} caption after retries:`, error.response?.data?.detail || error.message));
         }
       }
       
-      // Small delay to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Small delay between deletions
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
     
     if (deletedCount > 0) {
@@ -577,16 +600,19 @@ Translations:`;
         contentType: 'text/vtt'
       });
 
-      await axios.post(
-        `${this.baseURL}/videos/${videoId}/captions/${language}`,
-        form,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            ...form.getHeaders()
+      // Use retry wrapper for caption upload
+      await this.retryWithBackoff(async () => {
+        await axios.post(
+          `${this.baseURL}/videos/${videoId}/captions/${language}`,
+          form,
+          {
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              ...form.getHeaders()
+            }
           }
-        }
-      );
+        );
+      }, `Upload ${language.toUpperCase()} caption`);
 
       console.log(colors.green(`✅ Uploaded ${language.toUpperCase()} caption`));
       return true;
@@ -594,34 +620,45 @@ Translations:`;
       if (error.response?.status === 400 && error.response?.data?.detail?.includes('Caption already exists')) {
         console.log(colors.yellow(`⚠️  ${language.toUpperCase()} caption exists, deleting and retrying...`));
         
-        // Delete the existing caption and retry
+        // Delete the existing caption and retry with retry wrapper
         try {
-          await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
-            headers: { 'Authorization': `Bearer ${this.accessToken}` }
+          await this.retryWithBackoff(async () => {
+            await axios.delete(`${this.baseURL}/videos/${videoId}/captions/${language}`, {
+              headers: { 'Authorization': `Bearer ${this.accessToken}` }
+            });
+          }, `Delete existing ${language.toUpperCase()} caption`);
+          
+          // Wait a moment then retry upload with retry wrapper
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          const FormData = (await import('form-data')).default;
+          const newForm = new FormData();
+          newForm.append('file', Buffer.from(vttContent, 'utf8'), {
+            filename: `${filename}_${language}.vtt`,
+            contentType: 'text/vtt'
           });
           
-          // Wait a moment then retry upload
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          await axios.post(
-            `${this.baseURL}/videos/${videoId}/captions/${language}`,
-            form,
-            {
-              headers: {
-                'Authorization': `Bearer ${this.accessToken}`,
-                ...form.getHeaders()
+          await this.retryWithBackoff(async () => {
+            await axios.post(
+              `${this.baseURL}/videos/${videoId}/captions/${language}`,
+              newForm,
+              {
+                headers: {
+                  'Authorization': `Bearer ${this.accessToken}`,
+                  ...newForm.getHeaders()
+                }
               }
-            }
-          );
+            );
+          }, `Retry upload ${language.toUpperCase()} caption`);
           
           console.log(colors.green(`✅ Uploaded ${language.toUpperCase()} caption (after cleanup)`));
           return true;
         } catch (retryError) {
-          console.error(colors.red(`❌ Failed to upload ${language} captions after cleanup:`), retryError.response?.data || retryError.message);
+          console.error(colors.red(`❌ Failed to upload ${language} caption after cleanup and retries:`), retryError.response?.data || retryError.message);
           return false;
         }
       } else {
-        console.error(colors.red(`❌ Failed to upload ${language} captions:`), error.response?.data || error.message);
+        console.error(colors.red(`❌ Failed to upload ${language} caption after retries:`), error.response?.data || error.message);
         return false;
       }
     }
@@ -651,6 +688,85 @@ Translations:`;
       .replace(/[^\w\s\u0600-\u06FF-]/g, '')
       .replace(/\s+/g, '_')
       .substring(0, 100);
+  }
+
+  // Retry wrapper with exponential backoff for rate limits
+  async retryWithBackoff(operation, operationName, maxRetries = 5) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        
+        // Check if it's a rate limit error (429)
+        const isRateLimit = error.message.includes('429') || 
+                           error.response?.status === 429 ||
+                           error.message.includes('rate limit') ||
+                           error.message.includes('too many requests');
+        
+        if (isRateLimit && attempt < maxRetries) {
+          // Exponential backoff: 2^attempt seconds (2, 4, 8, 16, 32)
+          const waitTime = Math.pow(2, attempt) * 1000;
+          console.log(colors.yellow(`⚠️  ${operationName} rate limited (attempt ${attempt}/${maxRetries}), waiting ${waitTime/1000}s...`));
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
+        
+        // If not a rate limit error or max retries reached, throw the error
+        if (!isRateLimit) {
+          console.error(colors.red(`❌ ${operationName} failed (non-rate-limit error):`, error.message));
+        } else {
+          console.error(colors.red(`❌ ${operationName} failed after ${maxRetries} attempts due to rate limits`));
+        }
+        throw error;
+      }
+    }
+    
+    throw lastError;
+  }
+
+  // Verify video processing completion
+  async verifyVideoProcessing(video, filename) {
+    const languages = ['ar', 'en', 'fr', 'es', 'it'];
+    const missing = [];
+    
+    // Check local VTT files
+    for (const lang of languages) {
+      const vttPath = path.join(this.outputDir, `${filename}_${lang}.vtt`);
+      if (!await fs.pathExists(vttPath)) {
+        missing.push(`${lang} VTT file`);
+      }
+    }
+    
+    // Check uploaded captions (if upload is enabled)
+    if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
+      for (const lang of languages) {
+        try {
+          await this.retryWithBackoff(async () => {
+            const response = await axios.get(`${this.baseURL}/videos/${video.videoId}/captions`, {
+              headers: { 'Authorization': `Bearer ${this.accessToken}` }
+            });
+            
+            const hasCaptionForLang = response.data.data.some(caption => caption.srclang === lang);
+            if (!hasCaptionForLang) {
+              missing.push(`${lang} uploaded caption`);
+            }
+          }, `Caption verification for ${lang}`);
+        } catch (error) {
+          missing.push(`${lang} caption verification (API error)`);
+        }
+      }
+    }
+    
+    if (missing.length > 0) {
+      console.log(colors.red(`❌ Video processing incomplete. Missing: ${missing.join(', ')}`));
+      return false;
+    }
+    
+    console.log(colors.green(`✅ Video processing verified complete: ${filename}`));
+    return true;
   }
 
   async run() {
