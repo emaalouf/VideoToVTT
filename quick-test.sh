@@ -10,6 +10,20 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}🔬 VideoToVTT System Testing Suite${NC}"
 echo -e "${BLUE}===================================${NC}\n"
 
+# Check if jq is installed
+if ! command -v jq &> /dev/null; then
+    echo -e "${YELLOW}⚠️  jq not found. Installing...${NC}"
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y jq
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y jq
+    elif command -v brew &> /dev/null; then
+        brew install jq
+    else
+        echo -e "${RED}❌ Could not install jq. Please install manually.${NC}"
+    fi
+fi
+
 # Check if .env file exists
 if [ ! -f ".env" ]; then
     echo -e "${YELLOW}⚠️  No .env file found. Creating from config.example.env...${NC}"
@@ -36,7 +50,7 @@ run_test() {
     local test_command="$2"
     
     echo -e "\n${BLUE}🧪 Running ${test_name}...${NC}"
-    echo -e "${BLUE}${'='*40}${NC}"
+    echo -e "${BLUE}========================================${NC}"
     
     if eval "$test_command"; then
         echo -e "${GREEN}✅ ${test_name} completed${NC}"
@@ -45,6 +59,12 @@ run_test() {
         echo -e "${RED}❌ ${test_name} failed${NC}"
         return 1
     fi
+}
+
+# Function to extract API key from .env
+get_api_key() {
+    local key=$(grep "^OPENROUTER_API_KEY=" .env | cut -d '=' -f2- | tr -d '"' | tr -d "'")
+    echo "$key"
 }
 
 # Menu for test selection
@@ -69,7 +89,7 @@ case $choice in
         echo -e "${BLUE}Checking OpenRouter credits...${NC}"
         
         # Extract API key from .env file
-        API_KEY=$(grep "OPENROUTER_API_KEY" .env | cut -d '=' -f2)
+        API_KEY=$(get_api_key)
         if [ -z "$API_KEY" ]; then
             echo -e "${RED}❌ OPENROUTER_API_KEY not found in .env file${NC}"
             exit 1
@@ -79,14 +99,24 @@ case $choice in
         
         # Test credits
         echo -e "\n${BLUE}🔍 Testing credit check...${NC}"
-        curl -s --location 'https://openrouter.ai/api/v1/credits' \
-            --header "Authorization: Bearer $API_KEY" | jq '.' || echo "Credits API call failed"
+        if command -v jq &> /dev/null; then
+            curl -s --location 'https://openrouter.ai/api/v1/credits' \
+                --header "Authorization: Bearer $API_KEY" | jq '.'
+        else
+            curl -s --location 'https://openrouter.ai/api/v1/credits' \
+                --header "Authorization: Bearer $API_KEY"
+        fi
         
         # Test models
         echo -e "\n${BLUE}🤖 Testing model fetch (first 3 free models)...${NC}"
-        curl -s --location 'https://openrouter.ai/api/v1/models' | \
-            jq -r '.data[] | select(.pricing.prompt == "0" and .pricing.completion == "0") | .name' | \
-            head -3 || echo "Models API call failed"
+        if command -v jq &> /dev/null; then
+            curl -s --location 'https://openrouter.ai/api/v1/models' | \
+                jq -r '.data[] | select(.pricing.prompt == "0" and .pricing.completion == "0") | .name' | \
+                head -3
+        else
+            echo "Raw response (install jq for formatted output):"
+            curl -s --location 'https://openrouter.ai/api/v1/models' | head -100
+        fi
         ;;
     
     3)
@@ -111,16 +141,26 @@ case $choice in
     
     4)
         echo -e "\n${GREEN}🔧 Manual API Tests...${NC}"
-        API_KEY=$(grep "OPENROUTER_API_KEY" .env | cut -d '=' -f2)
+        API_KEY=$(get_api_key)
+        
+        if [ -z "$API_KEY" ]; then
+            echo -e "${RED}❌ OPENROUTER_API_KEY not found in .env file${NC}"
+            exit 1
+        fi
         
         echo -e "${BLUE}1. Testing credits API:${NC}"
         curl --location 'https://openrouter.ai/api/v1/credits' \
             --header "Authorization: Bearer $API_KEY"
         
         echo -e "\n\n${BLUE}2. Testing models API (first free model):${NC}"
-        curl -s --location 'https://openrouter.ai/api/v1/models' | \
-            jq '.data[] | select(.pricing.prompt == "0" and .pricing.completion == "0") | {name: .name, id: .id, context: .context_length}' | \
-            head -20
+        if command -v jq &> /dev/null; then
+            curl -s --location 'https://openrouter.ai/api/v1/models' | \
+                jq '.data[] | select(.pricing.prompt == "0" and .pricing.completion == "0") | {name: .name, id: .id, context: .context_length}' | \
+                head -20
+        else
+            echo "Raw response (install jq for formatted output):"
+            curl -s --location 'https://openrouter.ai/api/v1/models' | head -200
+        fi
         
         echo -e "\n\n${BLUE}3. Testing translation API:${NC}"
         curl --location 'https://openrouter.ai/api/v1/chat/completions' \
@@ -152,18 +192,20 @@ case $choice in
         if [[ $confirm =~ ^[Yy]$ ]]; then
             # Create a test version that processes only 1 video
             node -e "
-            import { VideoToVTTProcessor } from './index.js';
-            
-            class TestProcessor extends VideoToVTTProcessor {
-                async fetchAllVideos() {
-                    const allVideos = await super.fetchAllVideos();
-                    console.log('🎯 Testing with first video only:', allVideos[0]?.title);
-                    return allVideos.slice(0, 1); // Only process first video
+            import('./index.js').then(module => {
+                const { VideoToVTTProcessor } = module;
+                
+                class TestProcessor extends VideoToVTTProcessor {
+                    async fetchAllVideos() {
+                        const allVideos = await super.fetchAllVideos();
+                        console.log('🎯 Testing with first video only:', allVideos[0]?.title);
+                        return allVideos.slice(0, 1); // Only process first video
+                    }
                 }
-            }
-            
-            const processor = new TestProcessor();
-            processor.run().catch(console.error);
+                
+                const processor = new TestProcessor();
+                processor.run().catch(console.error);
+            });
             "
         else
             echo -e "${YELLOW}Test cancelled${NC}"
