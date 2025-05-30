@@ -30,10 +30,10 @@ class FastVideoToVTTProcessor {
     this.whisperPath = process.env.WHISPER_CPP_PATH || './whisper.cpp/main';
     this.modelPath = process.env.WHISPER_MODEL_PATH || './whisper.cpp/models/ggml-base.bin';
     
-    // Performance settings
-    this.maxConcurrentVideos = parseInt(process.env.MAX_CONCURRENT_VIDEOS) || 1;
-    this.maxConcurrentTranslations = parseInt(process.env.MAX_CONCURRENT_TRANSLATIONS) || 1;
-    this.batchSize = parseInt(process.env.TRANSLATION_BATCH_SIZE) || 5;
+    // Performance settings - AGGRESSIVE for paid models
+    this.maxConcurrentVideos = parseInt(process.env.MAX_CONCURRENT_VIDEOS) || 3; // Back to 3
+    this.maxConcurrentTranslations = parseInt(process.env.MAX_CONCURRENT_TRANSLATIONS) || 5; // Back to 5
+    this.batchSize = parseInt(process.env.TRANSLATION_BATCH_SIZE) || 15; // Increased to 15 for paid models
     this.skipExisting = process.env.SKIP_EXISTING_VTTS !== 'false';
     
     // Initialize LLM translator
@@ -278,9 +278,9 @@ Translations:`;
         const batchTranslations = await this.batchTranslateSubtitles(batch, targetLanguage, sourceLanguage);
         translations.push(...batchTranslations);
         
-        // Small delay between batches to reduce API pressure
+        // Small delay between batches for paid models
         if (i + this.batchSize < subtitleTexts.length) {
-          await new Promise(resolve => setTimeout(resolve, 5000)); // Increased to 5 seconds
+          await new Promise(resolve => setTimeout(resolve, 500)); // Reduced to 0.5 seconds
         }
       }
 
@@ -377,7 +377,7 @@ Translations:`;
     const filename = this.sanitizeFilename(video.title);
     console.log(colors.magenta(`\n🎬 Fast processing: ${video.title}`));
 
-    const maxProcessingRetries = 2;
+    const maxProcessingRetries = 3; // Back to 3 attempts
     let attempt = 1;
 
     while (attempt <= maxProcessingRetries) {
@@ -413,11 +413,10 @@ Translations:`;
         const languages = ['ar', 'en', 'fr', 'es', 'it'];
         const targetLanguages = languages.filter(lang => lang !== originalLangCode);
 
-        console.log(colors.magenta(`🔄 Sequentially translating to ${targetLanguages.length} languages...`));
+        console.log(colors.magenta(`🚀 Fast concurrent translating to ${targetLanguages.length} languages...`));
 
-        // Process translations sequentially with delays
-        const translationResults = [];
-        for (const targetLang of targetLanguages) {
+        // Process translations concurrently for speed
+        const translationPromises = targetLanguages.map(async (targetLang) => {
           try {
             console.log(colors.blue(`🌐 Translating to ${targetLang.toUpperCase()}...`));
             
@@ -430,19 +429,16 @@ Translations:`;
               await this.uploadCaptionToApiVideo(video.videoId, targetLang, translatedVtt, filename);
             }
             
-            translationResults.push({ language: targetLang, success: true });
-            
-            // Delay between languages to reduce API pressure
-            if (targetLang !== targetLanguages[targetLanguages.length - 1]) {
-              console.log(colors.gray(`⏳ Waiting 10 seconds before next language...`));
-              await new Promise(resolve => setTimeout(resolve, 10000));
-            }
+            return { language: targetLang, success: true };
             
           } catch (error) {
             console.error(colors.red(`❌ Translation failed for ${targetLang}:`, error.message));
-            translationResults.push({ language: targetLang, success: false, error: error.message });
+            return { language: targetLang, success: false, error: error.message };
           }
-        }
+        });
+
+        // Wait for all translations to complete
+        const translationResults = await Promise.all(translationPromises);
 
         // Verify processing completion
         const isComplete = await this.verifyVideoProcessing(video, filename);
@@ -593,8 +589,8 @@ Translations:`;
         }
       }
       
-      // Small delay between deletions
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Small delay between deletions for paid models
+      await new Promise(resolve => setTimeout(resolve, 100)); // Reduced back to 100ms
     }
     
     if (deletedCount > 0) {
@@ -711,7 +707,7 @@ Translations:`;
   }
 
   // Retry wrapper with exponential backoff for rate limits
-  async retryWithBackoff(operation, operationName, maxRetries = 3) {
+  async retryWithBackoff(operation, operationName, maxRetries = 5) {
     let lastError;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -742,8 +738,8 @@ Translations:`;
         }
         
         if (isRateLimit && attempt < maxRetries) {
-          // Much more conservative backoff: 30, 120, 300 seconds (5 minutes max)
-          const waitTime = Math.min(30 * Math.pow(4, attempt - 1), 300) * 1000;
+          // Faster backoff for paid models: 2, 8, 20, 40, 60 seconds
+          const waitTime = Math.min(2 * Math.pow(2, attempt), 60) * 1000;
           console.log(colors.yellow(`⚠️  ${operationName} rate limited (attempt ${attempt}/${maxRetries}), waiting ${waitTime/1000}s...`));
           await new Promise(resolve => setTimeout(resolve, waitTime));
           continue;
