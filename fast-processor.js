@@ -38,6 +38,13 @@ class FastVideoToVTTProcessor {
     
     // Initialize LLM translator
     this.translator = new LLMTranslator();
+    
+    // Override model selection for paid model if specified
+    if (process.env.FORCE_PAID_MODEL) {
+      console.log(colors.yellow(`🚀 Forcing paid model: ${process.env.FORCE_PAID_MODEL}`));
+      this.translator.selectedModel = process.env.FORCE_PAID_MODEL;
+    }
+    
     this.llmAvailable = false;
     
     // Create directories

@@ -53,82 +53,50 @@ export class LLMTranslator {
     }
   }
 
-  selectBestModel() {
-    if (this.model) {
-      // If model is explicitly set, use it
-      this.selectedModel = this.model;
-      console.log(colors.cyan(`🎯 Using configured model: ${this.selectedModel}`));
-      return this.selectedModel;
-    }
-
-    if (!this.modelsList.length) {
-      // Fallback to a reliable default
-      this.selectedModel = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
-      console.log(colors.yellow(`⚠️  Using fallback model: ${this.selectedModel}`));
-      return this.selectedModel;
-    }
-
-    // Prioritize models based on cost and quality
-    const preferredModels = [
-      // Free models (best choice)
+  async selectBestModel(models) {
+    console.log(colors.blue(`🤖 Selecting best model from ${models.length} available...`));
+    
+    // Priority order: Fast paid models first, then free models as fallback
+    const modelPriority = [
+      // Fast, reliable paid models for translation
+      'anthropic/claude-3-haiku-20240307',           // Very fast, cheap
+      'openai/gpt-4o-mini',                          // Fast and affordable
+      'google/gemini-flash-1.5',                     // Fast Google model
+      'meta-llama/llama-3.1-8b-instruct',          // Fast Llama
+      'mistralai/mistral-7b-instruct',              // Fast Mistral
+      
+      // Backup free models (if paid models unavailable)
       'deepseek/deepseek-r1-0528-qwen3-8b:free',
-      'deepseek/deepseek-r1-0528:free',
-      
-      // Very cheap but high quality
-      'deepseek/deepseek-r1-0528-qwen3-8b',
-      'google/gemma-2b-it',
-      'deepseek/deepseek-r1-0528',
-      
-      // Fallback to other good models
-      'meta-llama/llama-3.1-8b-instruct',
-      'openai/gpt-4o-mini',
-      'anthropic/claude-3-haiku'
+      'google/gemma-2b-it:free',
+      'meta-llama/llama-3.2-1b-instruct:free'
     ];
-
-    // Find the first available preferred model
-    for (const preferredModel of preferredModels) {
-      const model = this.modelsList.find(m => m.id === preferredModel);
+    
+    // Find the first available model from our priority list
+    for (const preferredModel of modelPriority) {
+      const model = models.find(m => m.id === preferredModel);
       if (model) {
-        this.selectedModel = model.id;
-        const isFree = parseFloat(model.pricing.prompt) === 0 && parseFloat(model.pricing.completion) === 0;
-        const cost = isFree ? 'FREE' : `$${model.pricing.prompt}/1K tokens (prompt), $${model.pricing.completion}/1K tokens (completion)`;
-        
-        console.log(colors.green(`🎯 Selected model: ${model.name}`));
+        const isPaid = !model.id.includes(':free');
+        console.log(colors.green(`🎯 Selected model: ${model.name || model.id}`));
         console.log(colors.cyan(`   📦 Model ID: ${model.id}`));
-        console.log(colors.cyan(`   💰 Cost: ${cost}`));
-        console.log(colors.cyan(`   📏 Context: ${model.context_length} tokens`));
+        console.log(colors.cyan(`   💰 Cost: ${isPaid ? 'PAID (Higher rate limits!)' : 'FREE'}`));
+        console.log(colors.cyan(`   📏 Context: ${model.context_length || 'Unknown'} tokens`));
         
-        return this.selectedModel;
+        if (isPaid) {
+          console.log(colors.green(`✅ Using paid model - much higher rate limits!`));
+        }
+        
+        return model.id;
       }
     }
-
-    // If no preferred model found, use the first free model
-    const freeModel = this.modelsList.find(m => 
-      parseFloat(m.pricing.prompt) === 0 && parseFloat(m.pricing.completion) === 0
-    );
     
-    if (freeModel) {
-      this.selectedModel = freeModel.id;
-      console.log(colors.green(`🎯 Selected free model: ${freeModel.name} (${freeModel.id})`));
-      return this.selectedModel;
+    // Fallback to the first available model
+    if (models.length > 0) {
+      const fallbackModel = models[0];
+      console.log(colors.yellow(`⚠️  Using fallback model: ${fallbackModel.name || fallbackModel.id}`));
+      return fallbackModel.id;
     }
-
-    // Last resort: use the cheapest model
-    const cheapestModel = this.modelsList
-      .filter(m => parseFloat(m.pricing.prompt) > 0 || parseFloat(m.pricing.completion) > 0)
-      .sort((a, b) => (parseFloat(a.pricing.prompt) + parseFloat(a.pricing.completion)) - 
-                      (parseFloat(b.pricing.prompt) + parseFloat(b.pricing.completion)))[0];
-
-    if (cheapestModel) {
-      this.selectedModel = cheapestModel.id;
-      console.log(colors.yellow(`🎯 Selected cheapest model: ${cheapestModel.name} (${cheapestModel.id})`));
-      return this.selectedModel;
-    }
-
-    // Ultimate fallback
-    this.selectedModel = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
-    console.log(colors.red(`⚠️  Using ultimate fallback: ${this.selectedModel}`));
-    return this.selectedModel;
+    
+    throw new Error('No models available');
   }
 
   async initialize() {
@@ -146,7 +114,7 @@ export class LLMTranslator {
     await this.fetchAvailableModels();
     
     // Select the best model
-    this.selectBestModel();
+    this.selectedModel = await this.selectBestModel(this.modelsList);
     
     return true;
   }
