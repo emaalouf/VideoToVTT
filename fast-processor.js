@@ -47,9 +47,127 @@ class FastVideoToVTTProcessor {
     
     this.llmAvailable = false;
     
+    // Time tracking and estimation
+    this.processingStats = {
+      startTime: null,
+      videosProcessed: 0,
+      totalVideos: 0,
+      phaseAverages: {
+        download: { total: 0, count: 0, avg: 0 },
+        transcription: { total: 0, count: 0, avg: 0 },
+        translation: { total: 0, count: 0, avg: 0 },
+        upload: { total: 0, count: 0, avg: 0 },
+        overall: { total: 0, count: 0, avg: 0 }
+      },
+      currentVideoStart: null,
+      currentVideoTitle: '',
+      lastProgressUpdate: Date.now()
+    };
+    
     // Create directories
     fs.ensureDirSync(this.outputDir);
     fs.ensureDirSync(this.tempDir);
+  }
+
+  // Update phase timing statistics
+  updatePhaseStats(phase, duration) {
+    const stats = this.processingStats.phaseAverages[phase];
+    stats.total += duration;
+    stats.count += 1;
+    stats.avg = stats.total / stats.count;
+    
+    console.log(colors.gray(`   ⏱️  ${phase}: ${(duration/1000).toFixed(1)}s (avg: ${(stats.avg/1000).toFixed(1)}s)`));
+  }
+
+  // Calculate estimated time for remaining videos
+  calculateETAs() {
+    const now = Date.now();
+    const elapsed = now - this.processingStats.startTime;
+    const processed = this.processingStats.videosProcessed;
+    const remaining = this.processingStats.totalVideos - processed;
+    
+    if (processed === 0) {
+      return {
+        currentVideoETA: 'Calculating...',
+        overallETA: 'Calculating...',
+        overallProgress: 0
+      };
+    }
+    
+    // Current video ETA (based on phase averages)
+    const overallAvg = this.processingStats.phaseAverages.overall.avg;
+    const currentVideoElapsed = this.processingStats.currentVideoStart ? 
+      now - this.processingStats.currentVideoStart : 0;
+    const currentVideoETA = overallAvg > 0 ? 
+      Math.max(0, overallAvg - currentVideoElapsed) : currentVideoElapsed;
+    
+    // Overall ETA (based on current processing rate with concurrency)
+    const avgPerVideo = elapsed / processed;
+    const remainingTime = (remaining * avgPerVideo) / this.maxConcurrentVideos; // Account for concurrency
+    
+    // Progress percentage
+    const overallProgress = Math.round((processed / this.processingStats.totalVideos) * 100);
+    
+    return {
+      currentVideoETA: this.formatDuration(currentVideoETA),
+      overallETA: this.formatDuration(remainingTime),
+      overallProgress: overallProgress,
+      avgPerVideo: this.formatDuration(avgPerVideo),
+      totalElapsed: this.formatDuration(elapsed)
+    };
+  }
+
+  // Format duration in human-readable format
+  formatDuration(ms) {
+    if (!ms || ms < 0) return '0s';
+    
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
+    }
+  }
+
+  // Display progress and ETA information
+  displayProgressUpdate(videoTitle = null) {
+    const now = Date.now();
+    
+    // Only update every 30 seconds to avoid spam
+    if (now - this.processingStats.lastProgressUpdate < 30000) {
+      return;
+    }
+    
+    this.processingStats.lastProgressUpdate = now;
+    
+    const etas = this.calculateETAs();
+    
+    console.log(colors.rainbow('\n📊 PROCESSING PROGRESS UPDATE'));
+    console.log(colors.rainbow('=' .repeat(40)));
+    console.log(colors.cyan(`📈 Overall Progress: ${etas.overallProgress}% (${this.processingStats.videosProcessed}/${this.processingStats.totalVideos})`));
+    console.log(colors.cyan(`⏱️  Total Elapsed: ${etas.totalElapsed}`));
+    console.log(colors.cyan(`🎯 Overall ETA: ${etas.overallETA}`));
+    console.log(colors.cyan(`📊 Avg per Video: ${etas.avgPerVideo}`));
+    
+    if (videoTitle) {
+      console.log(colors.yellow(`🎬 Current: ${videoTitle}`));
+      console.log(colors.yellow(`🔮 Current Video ETA: ${etas.currentVideoETA}`));
+    }
+    
+    // Show phase performance
+    console.log(colors.gray('\n⏱️  Phase Averages:'));
+    Object.entries(this.processingStats.phaseAverages).forEach(([phase, stats]) => {
+      if (stats.count > 0) {
+        console.log(colors.gray(`   ${phase}: ${(stats.avg/1000).toFixed(1)}s (${stats.count} samples)`));
+      }
+    });
+    
+    console.log(colors.rainbow('=' .repeat(40) + '\n'));
   }
 
   async initialize() {
@@ -257,107 +375,27 @@ Translations:`;
     }
   }
 
-  // Fast VTT translation using batching
-  async translateVTTFast(vttContent, targetLanguage, sourceLanguage = 'auto') {
-    console.log(colors.blue(`🌐 Fast translating VTT content to ${targetLanguage.toUpperCase()}...`));
-
-    if (!this.llmAvailable) {
-      throw new Error(`Cannot translate to ${targetLanguage} - LLM translator not available`);
-    }
-
-    try {
-      const vttLines = vttContent.split('\n');
-      const translatedLines = [];
-      const subtitleTexts = [];
-      const subtitleIndices = [];
-
-      // Parse VTT and collect subtitle texts
-      for (let i = 0; i < vttLines.length; i++) {
-        const line = vttLines[i].trim();
-
-        // Skip WEBVTT header, empty lines, timestamps, and cue settings
-        if (line.startsWith('WEBVTT') || line === '' || line.includes('-->') || 
-            line.match(/^(align:|line:|position:|size:|vertical:)/)) {
-          translatedLines.push(line);
-          continue;
-        }
-
-        // This is subtitle text
-        if (line !== '') {
-          subtitleTexts.push(line);
-          subtitleIndices.push(i);
-          translatedLines.push('PLACEHOLDER'); // Will be replaced later
-        } else {
-          translatedLines.push(line);
-        }
-      }
-
-      if (subtitleTexts.length === 0) {
-        throw new Error('No subtitle text found to translate in VTT content');
-      }
-
-      console.log(colors.cyan(`📝 Found ${subtitleTexts.length} subtitles to translate`));
-
-      // Batch translate subtitles - NO FALLBACKS, let errors propagate
-      const translations = [];
-      for (let i = 0; i < subtitleTexts.length; i += this.batchSize) {
-        const batch = subtitleTexts.slice(i, i + this.batchSize);
-        const batchTranslations = await this.batchTranslateSubtitles(batch, targetLanguage, sourceLanguage);
-        translations.push(...batchTranslations);
-        
-        // Small delay between batches for paid models
-        if (i + this.batchSize < subtitleTexts.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-
-      // Verify we have all translations
-      if (translations.length !== subtitleTexts.length) {
-        throw new Error(`Translation count mismatch: expected ${subtitleTexts.length}, got ${translations.length}`);
-      }
-
-      // Replace placeholders with actual translations
-      let translationIndex = 0;
-      for (let i = 0; i < translatedLines.length; i++) {
-        if (translatedLines[i] === 'PLACEHOLDER') {
-          translatedLines[i] = translations[translationIndex];
-          translationIndex++;
-        }
-      }
-
-      const translatedVTT = translatedLines.join('\n');
-      
-      // Final validation - ensure the VTT doesn't contain placeholder patterns
-      if (translatedVTT.includes('[AR]') || translatedVTT.includes('[EN]') || 
-          translatedVTT.includes('[FR]') || translatedVTT.includes('[ES]') || 
-          translatedVTT.includes('[IT]') || translatedVTT.includes('PLACEHOLDER')) {
-        throw new Error(`Translation contains placeholder text - not a real translation`);
-      }
-
-      console.log(colors.green(`✅ Fast VTT translation to ${targetLanguage.toUpperCase()} completed and validated`));
-      return translatedVTT;
-
-    } catch (error) {
-      console.error(colors.red(`❌ Fast VTT translation failed:`, error.message));
-      // NO FALLBACK - let the error propagate to fail the video processing
-      throw error;
-    }
-  }
-
   // Process multiple videos concurrently
   async processVideosConcurrently(videos) {
     const results = [];
     const errors = [];
     
+    // Initialize timing stats
+    this.processingStats.startTime = Date.now();
+    this.processingStats.totalVideos = videos.length;
+    this.processingStats.videosProcessed = 0;
+    
+    console.log(colors.cyan(`🎯 Starting processing of ${videos.length} videos with time estimation...`));
+    
     // Create progress bar
     const progressBar = new cliProgress.SingleBar({
-      format: 'Progress |' + colors.cyan('{bar}') + '| {percentage}% || {value}/{total} Videos || Active: {active}',
+      format: 'Progress |' + colors.cyan('{bar}') + '| {percentage}% || {value}/{total} Videos || ETA: {eta}s || Active: {active}',
       barCompleteChar: '\u2588',
       barIncompleteChar: '\u2591',
       hideCursor: true
     });
 
-    progressBar.start(videos.length, 0, { active: 'Starting...' });
+    progressBar.start(videos.length, 0, { active: 'Starting...', eta: 'Calculating...' });
 
     const semaphore = new Array(this.maxConcurrentVideos).fill(null);
     let completed = 0;
@@ -368,18 +406,41 @@ Translations:`;
       
       const videoIndex = started++;
       const video = videos[videoIndex];
+      const videoStartTime = Date.now();
       
       try {
-        progressBar.update(completed, { active: `${this.maxConcurrentVideos - semaphore.filter(s => s === null).length} active` });
+        // Update current video tracking
+        this.processingStats.currentVideoStart = videoStartTime;
+        this.processingStats.currentVideoTitle = video.title;
         
+        // Update progress bar with ETA
+        const etas = this.calculateETAs();
+        progressBar.update(completed, { 
+          active: `${this.maxConcurrentVideos - semaphore.filter(s => s === null).length} active`,
+          eta: etas.overallETA
+        });
+        
+        // Process the video with timing
         await this.processVideoFast(video);
-        results.push({ video, success: true });
+        
+        // Update timing stats
+        const videoDuration = Date.now() - videoStartTime;
+        this.updatePhaseStats('overall', videoDuration);
+        this.processingStats.videosProcessed++;
+        
+        results.push({ video, success: true, duration: videoDuration });
+        
+        // Display periodic progress updates
+        this.displayProgressUpdate();
+        
       } catch (error) {
         console.error(colors.red(`❌ Failed to process ${video.title}:`), error.message);
-        errors.push({ video, error: error.message });
+        const videoDuration = Date.now() - videoStartTime;
+        errors.push({ video, error: error.message, duration: videoDuration });
       } finally {
         completed++;
-        progressBar.update(completed);
+        const etas = this.calculateETAs();
+        progressBar.update(completed, { eta: etas.overallETA });
         semaphore[index] = null;
         
         // Start next video
@@ -399,14 +460,30 @@ Translations:`;
     
     progressBar.stop();
 
-    console.log(colors.rainbow('\n📊 Processing Summary:'));
+    // Final summary with timing
+    const totalDuration = Date.now() - this.processingStats.startTime;
+    const avgPerVideo = totalDuration / videos.length;
+    
+    console.log(colors.rainbow('\n📊 FINAL PROCESSING SUMMARY'));
+    console.log(colors.rainbow('=' .repeat(50)));
     console.log(colors.green(`✅ Successful: ${results.length}`));
     console.log(colors.red(`❌ Failed: ${errors.length}`));
+    console.log(colors.cyan(`⏱️  Total Time: ${this.formatDuration(totalDuration)}`));
+    console.log(colors.cyan(`📊 Average per Video: ${this.formatDuration(avgPerVideo)}`));
+    console.log(colors.cyan(`🚀 Processing Rate: ${(results.length / (totalDuration / 1000 / 60)).toFixed(2)} videos/minute`));
+    
+    // Show phase performance summary
+    console.log(colors.gray('\n⏱️  Phase Performance Summary:'));
+    Object.entries(this.processingStats.phaseAverages).forEach(([phase, stats]) => {
+      if (stats.count > 0) {
+        console.log(colors.gray(`   ${phase}: avg ${(stats.avg/1000).toFixed(1)}s (${stats.count} samples)`));
+      }
+    });
     
     if (errors.length > 0) {
       console.log(colors.yellow('\n⚠️  Failed videos:'));
-      errors.forEach(({ video, error }) => {
-        console.log(colors.red(`   • ${video.title}: ${error}`));
+      errors.forEach(({ video, error, duration }) => {
+        console.log(colors.red(`   • ${video.title}: ${error} (${this.formatDuration(duration)})`));
       });
     }
 
@@ -526,11 +603,14 @@ Translations:`;
   // ... (I'll include the key ones here)
 
   async downloadVideo(video) {
+    const downloadStart = Date.now();
     const videoUrl = video.assets.mp4;
     const filename = this.sanitizeFilename(video.title);
     const videoPath = path.join(this.tempDir, `${filename}.mp4`);
 
     try {
+      console.log(colors.blue(`📥 Downloading ${video.title}...`));
+      
       const response = await axios({
         method: 'get',
         url: videoUrl,
@@ -545,6 +625,9 @@ Translations:`;
         writer.on('finish', resolve);
         writer.on('error', reject);
       });
+
+      const downloadDuration = Date.now() - downloadStart;
+      this.updatePhaseStats('download', downloadDuration);
 
       return videoPath;
     } catch (error) {
@@ -574,7 +657,11 @@ Translations:`;
   }
 
   async transcribeWithWhisper(audioPath, language = 'auto') {
+    const transcriptionStart = Date.now();
+    
     try {
+      console.log(colors.blue(`🎤 Transcribing audio...`));
+      
       const audioBasename = path.basename(audioPath, path.extname(audioPath));
       const outputPath = path.join(this.tempDir, audioBasename);
 
@@ -593,6 +680,10 @@ Translations:`;
       
       if (fs.existsSync(vttPath)) {
         const vttContent = await fs.readFile(vttPath, 'utf8');
+        
+        const transcriptionDuration = Date.now() - transcriptionStart;
+        this.updatePhaseStats('transcription', transcriptionDuration);
+        
         return vttContent;
       } else {
         throw new Error('VTT file not generated by Whisper');
@@ -644,11 +735,15 @@ Translations:`;
   }
 
   async uploadCaptionToApiVideo(videoId, language, vttContent, filename) {
+    const uploadStart = Date.now();
+    
     if (!process.env.UPLOAD_CAPTIONS || process.env.UPLOAD_CAPTIONS.toLowerCase() !== 'true') {
       return false;
     }
 
     try {
+      console.log(colors.blue(`📤 Uploading ${language.toUpperCase()} caption...`));
+      
       const FormData = (await import('form-data')).default;
       const form = new FormData();
       
@@ -670,6 +765,9 @@ Translations:`;
           }
         );
       }, `Upload ${language.toUpperCase()} caption`);
+
+      const uploadDuration = Date.now() - uploadStart;
+      this.updatePhaseStats('upload', uploadDuration);
 
       console.log(colors.green(`✅ Uploaded ${language.toUpperCase()} caption`));
       return true;
@@ -708,6 +806,9 @@ Translations:`;
             );
           }, `Retry upload ${language.toUpperCase()} caption`);
           
+          const uploadDuration = Date.now() - uploadStart;
+          this.updatePhaseStats('upload', uploadDuration);
+          
           console.log(colors.green(`✅ Uploaded ${language.toUpperCase()} caption (after cleanup)`));
           return true;
         } catch (retryError) {
@@ -718,6 +819,97 @@ Translations:`;
         console.error(colors.red(`❌ Failed to upload ${language} caption after retries:`), error.response?.data || error.message);
         return false;
       }
+    }
+  }
+
+  // Fast VTT translation using batching
+  async translateVTTFast(vttContent, targetLanguage, sourceLanguage = 'auto') {
+    const translationStart = Date.now();
+    console.log(colors.blue(`🌐 Fast translating VTT content to ${targetLanguage.toUpperCase()}...`));
+
+    if (!this.llmAvailable) {
+      throw new Error(`Cannot translate to ${targetLanguage} - LLM translator not available`);
+    }
+
+    try {
+      const vttLines = vttContent.split('\n');
+      const translatedLines = [];
+      const subtitleTexts = [];
+      const subtitleIndices = [];
+
+      // Parse VTT and collect subtitle texts
+      for (let i = 0; i < vttLines.length; i++) {
+        const line = vttLines[i].trim();
+
+        // Skip WEBVTT header, empty lines, timestamps, and cue settings
+        if (line.startsWith('WEBVTT') || line === '' || line.includes('-->') || 
+            line.match(/^(align:|line:|position:|size:|vertical:)/)) {
+          translatedLines.push(line);
+          continue;
+        }
+
+        // This is subtitle text
+        if (line !== '') {
+          subtitleTexts.push(line);
+          subtitleIndices.push(i);
+          translatedLines.push('PLACEHOLDER'); // Will be replaced later
+        } else {
+          translatedLines.push(line);
+        }
+      }
+
+      if (subtitleTexts.length === 0) {
+        throw new Error('No subtitle text found to translate in VTT content');
+      }
+
+      console.log(colors.cyan(`📝 Found ${subtitleTexts.length} subtitles to translate`));
+
+      // Batch translate subtitles - NO FALLBACKS, let errors propagate
+      const translations = [];
+      for (let i = 0; i < subtitleTexts.length; i += this.batchSize) {
+        const batch = subtitleTexts.slice(i, i + this.batchSize);
+        const batchTranslations = await this.batchTranslateSubtitles(batch, targetLanguage, sourceLanguage);
+        translations.push(...batchTranslations);
+        
+        // Small delay between batches for paid models
+        if (i + this.batchSize < subtitleTexts.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      // Verify we have all translations
+      if (translations.length !== subtitleTexts.length) {
+        throw new Error(`Translation count mismatch: expected ${subtitleTexts.length}, got ${translations.length}`);
+      }
+
+      // Replace placeholders with actual translations
+      let translationIndex = 0;
+      for (let i = 0; i < translatedLines.length; i++) {
+        if (translatedLines[i] === 'PLACEHOLDER') {
+          translatedLines[i] = translations[translationIndex];
+          translationIndex++;
+        }
+      }
+
+      const translatedVTT = translatedLines.join('\n');
+      
+      // Final validation - ensure the VTT doesn't contain placeholder patterns
+      if (translatedVTT.includes('[AR]') || translatedVTT.includes('[EN]') || 
+          translatedVTT.includes('[FR]') || translatedVTT.includes('[ES]') || 
+          translatedVTT.includes('[IT]') || translatedVTT.includes('PLACEHOLDER')) {
+        throw new Error(`Translation contains placeholder text - not a real translation`);
+      }
+
+      const translationDuration = Date.now() - translationStart;
+      this.updatePhaseStats('translation', translationDuration);
+
+      console.log(colors.green(`✅ Fast VTT translation to ${targetLanguage.toUpperCase()} completed and validated`));
+      return translatedVTT;
+
+    } catch (error) {
+      console.error(colors.red(`❌ Fast VTT translation failed:`, error.message));
+      // NO FALLBACK - let the error propagate to fail the video processing
+      throw error;
     }
   }
 
