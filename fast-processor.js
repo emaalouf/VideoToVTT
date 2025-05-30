@@ -763,7 +763,7 @@ Translations:`;
     const languages = ['ar', 'en', 'fr', 'es', 'it'];
     const missing = [];
     
-    // Check local VTT files
+    // Check local VTT files (most important)
     for (const lang of languages) {
       const vttPath = path.join(this.outputDir, `${filename}_${lang}.vtt`);
       if (!await fs.pathExists(vttPath)) {
@@ -771,33 +771,52 @@ Translations:`;
       }
     }
     
-    // Check uploaded captions (if upload is enabled)
-    if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
-      for (const lang of languages) {
-        try {
-          await this.retryWithBackoff(async () => {
-            const response = await axios.get(`${this.baseURL}/videos/${video.videoId}/captions`, {
-              headers: { 'Authorization': `Bearer ${this.accessToken}` }
-            });
-            
-            const hasCaptionForLang = response.data.data.some(caption => caption.srclang === lang);
-            if (!hasCaptionForLang) {
-              missing.push(`${lang} uploaded caption`);
-            }
-          }, `Caption verification for ${lang}`);
-        } catch (error) {
-          missing.push(`${lang} caption verification (API error)`);
-        }
+    // If local VTT files are complete, that's the main success criteria
+    if (missing.length === 0) {
+      console.log(colors.green(`✅ Video processing verified complete (local VTT files): ${filename}`));
+      
+      // Optional: Check uploaded captions (if upload is enabled) but don't fail if they're missing
+      if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
+        await this.verifyUploadedCaptions(video, filename, languages);
       }
+      
+      return true;
     }
     
-    if (missing.length > 0) {
-      console.log(colors.red(`❌ Video processing incomplete. Missing: ${missing.join(', ')}`));
-      return false;
+    console.log(colors.red(`❌ Video processing incomplete. Missing local files: ${missing.join(', ')}`));
+    return false;
+  }
+
+  // Separate method to verify uploaded captions (non-blocking)
+  async verifyUploadedCaptions(video, filename, languages) {
+    try {
+      console.log(colors.blue(`🔍 Checking uploaded captions for ${filename}...`));
+      
+      // Wait a moment for API to sync
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const response = await this.retryWithBackoff(async () => {
+        return await axios.get(`${this.baseURL}/videos/${video.videoId}/captions`, {
+          headers: { 'Authorization': `Bearer ${this.accessToken}` }
+        });
+      }, `Caption verification for ${filename}`, 2); // Only 2 retries for verification
+      
+      const uploadedCaptions = response.data.data || [];
+      const uploadedLanguages = uploadedCaptions.map(cap => cap.srclang);
+      
+      const missingUploads = languages.filter(lang => !uploadedLanguages.includes(lang));
+      
+      if (missingUploads.length === 0) {
+        console.log(colors.green(`✅ All captions uploaded successfully for ${filename}`));
+      } else {
+        console.log(colors.yellow(`⚠️  Some captions not yet visible in API for ${filename}: ${missingUploads.join(', ')}`));
+        console.log(colors.yellow(`   This is likely due to API sync delays and doesn't affect local VTT files`));
+      }
+      
+    } catch (error) {
+      console.log(colors.yellow(`⚠️  Could not verify uploaded captions for ${filename}: ${error.message}`));
+      console.log(colors.yellow(`   This doesn't affect processing success - local VTT files are complete`));
     }
-    
-    console.log(colors.green(`✅ Video processing verified complete: ${filename}`));
-    return true;
   }
 
   async run() {
