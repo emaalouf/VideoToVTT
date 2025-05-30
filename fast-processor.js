@@ -24,16 +24,17 @@ class FastVideoToVTTProcessor {
     this.apiKey = process.env.API_VIDEO_KEY || 'B6OEQoXryWfHgE9XRsxHGksPwSiyntyz7J30bQY3XkQ';
     this.baseURL = 'https://ws.api.video';
     this.accessToken = null;
+    this.tokenExpiry = null;
     this.outputDir = process.env.OUTPUT_DIR || './output';
     this.tempDir = process.env.TEMP_DIR || './temp';
     this.whisperPath = process.env.WHISPER_CPP_PATH || './whisper.cpp/main';
     this.modelPath = process.env.WHISPER_MODEL_PATH || './whisper.cpp/models/ggml-base.bin';
     
     // Performance settings
-    this.maxConcurrentVideos = parseInt(process.env.MAX_CONCURRENT_VIDEOS) || 3;
-    this.maxConcurrentTranslations = parseInt(process.env.MAX_CONCURRENT_TRANSLATIONS) || 5;
-    this.batchSize = parseInt(process.env.TRANSLATION_BATCH_SIZE) || 10; // Translate multiple subtitles at once
-    this.skipExisting = process.env.SKIP_EXISTING_VTTS !== 'false'; // Skip if VTT files already exist
+    this.maxConcurrentVideos = parseInt(process.env.MAX_CONCURRENT_VIDEOS) || 1;
+    this.maxConcurrentTranslations = parseInt(process.env.MAX_CONCURRENT_TRANSLATIONS) || 1;
+    this.batchSize = parseInt(process.env.TRANSLATION_BATCH_SIZE) || 5;
+    this.skipExisting = process.env.SKIP_EXISTING_VTTS !== 'false';
     
     // Initialize LLM translator
     this.translator = new LLMTranslator();
@@ -82,12 +83,22 @@ class FastVideoToVTTProcessor {
       });
 
       this.accessToken = response.data.access_token;
+      this.tokenExpiry = Date.now() + (50 * 60 * 1000); // Refresh every 50 minutes (tokens last 1 hour)
       console.log(colors.green('✅ Authentication successful!'));
       return this.accessToken;
     } catch (error) {
       console.error(colors.red('❌ Authentication failed:'), error.response?.data || error.message);
       throw error;
     }
+  }
+
+  async ensureValidToken() {
+    // Check if token is expired or will expire in the next 5 minutes
+    if (!this.accessToken || !this.tokenExpiry || Date.now() > (this.tokenExpiry - 5 * 60 * 1000)) {
+      console.log(colors.yellow('🔄 Refreshing expired API.video token...'));
+      await this.authenticate();
+    }
+    return this.accessToken;
   }
 
   async fetchAllVideos() {
@@ -260,9 +271,9 @@ Translations:`;
         const batchTranslations = await this.batchTranslateSubtitles(batch, targetLanguage, sourceLanguage);
         translations.push(...batchTranslations);
         
-        // Small delay between batches
+        // Small delay between batches to reduce API pressure
         if (i + this.batchSize < subtitleTexts.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Increased to 5 seconds
         }
       }
 
@@ -359,7 +370,7 @@ Translations:`;
     const filename = this.sanitizeFilename(video.title);
     console.log(colors.magenta(`\n🎬 Fast processing: ${video.title}`));
 
-    const maxProcessingRetries = 3;
+    const maxProcessingRetries = 2;
     let attempt = 1;
 
     while (attempt <= maxProcessingRetries) {
@@ -391,15 +402,18 @@ Translations:`;
         const originalVttPath = path.join(this.outputDir, `${filename}_${originalLangCode}.vtt`);
         await fs.writeFile(originalVttPath, originalVtt, 'utf8');
 
-        // Fast concurrent translation to all languages
+        // Sequential translation instead of concurrent to reduce API pressure
         const languages = ['ar', 'en', 'fr', 'es', 'it'];
         const targetLanguages = languages.filter(lang => lang !== originalLangCode);
 
-        console.log(colors.magenta(`🚀 Fast translating to ${targetLanguages.length} languages concurrently...`));
+        console.log(colors.magenta(`🔄 Sequentially translating to ${targetLanguages.length} languages...`));
 
-        // Process translations concurrently
-        const translationPromises = targetLanguages.map(async (targetLang) => {
+        // Process translations sequentially with delays
+        const translationResults = [];
+        for (const targetLang of targetLanguages) {
           try {
+            console.log(colors.blue(`🌐 Translating to ${targetLang.toUpperCase()}...`));
+            
             const translatedVtt = await this.translateVTTFast(originalVtt, targetLang, originalLangCode);
             const translatedVttPath = path.join(this.outputDir, `${filename}_${targetLang}.vtt`);
             await fs.writeFile(translatedVttPath, translatedVtt, 'utf8');
@@ -409,19 +423,18 @@ Translations:`;
               await this.uploadCaptionToApiVideo(video.videoId, targetLang, translatedVtt, filename);
             }
             
-            return { language: targetLang, success: true };
+            translationResults.push({ language: targetLang, success: true });
+            
+            // Delay between languages to reduce API pressure
+            if (targetLang !== targetLanguages[targetLanguages.length - 1]) {
+              console.log(colors.gray(`⏳ Waiting 10 seconds before next language...`));
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            
           } catch (error) {
             console.error(colors.red(`❌ Translation failed for ${targetLang}:`, error.message));
-            return { language: targetLang, success: false, error: error.message };
+            translationResults.push({ language: targetLang, success: false, error: error.message });
           }
-        });
-
-        // Wait for all translations to complete
-        const translationResults = await Promise.all(translationPromises);
-        
-        // Upload original caption
-        if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
-          await this.uploadCaptionToApiVideo(video.videoId, originalLangCode, originalVtt, filename);
         }
 
         // Verify processing completion
@@ -691,11 +704,16 @@ Translations:`;
   }
 
   // Retry wrapper with exponential backoff for rate limits
-  async retryWithBackoff(operation, operationName, maxRetries = 5) {
+  async retryWithBackoff(operation, operationName, maxRetries = 3) {
     let lastError;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        // Ensure valid token for API.video operations
+        if (operationName.includes('caption') || operationName.includes('Caption')) {
+          await this.ensureValidToken();
+        }
+        
         return await operation();
       } catch (error) {
         lastError = error;
@@ -706,9 +724,19 @@ Translations:`;
                            error.message.includes('rate limit') ||
                            error.message.includes('too many requests');
         
+        // Check if it's an auth error (401)
+        const isAuthError = error.response?.status === 401;
+        
+        if (isAuthError && operationName.includes('caption')) {
+          console.log(colors.yellow(`🔄 Auth error for ${operationName}, refreshing token...`));
+          await this.authenticate();
+          // Don't count auth errors as retry attempts, just retry immediately
+          continue;
+        }
+        
         if (isRateLimit && attempt < maxRetries) {
-          // Exponential backoff: 2^attempt seconds (2, 4, 8, 16, 32)
-          const waitTime = Math.pow(2, attempt) * 1000;
+          // Much more conservative backoff: 30, 120, 300 seconds (5 minutes max)
+          const waitTime = Math.min(30 * Math.pow(4, attempt - 1), 300) * 1000;
           console.log(colors.yellow(`⚠️  ${operationName} rate limited (attempt ${attempt}/${maxRetries}), waiting ${waitTime/1000}s...`));
           await new Promise(resolve => setTimeout(resolve, waitTime));
           continue;
