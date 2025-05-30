@@ -58,22 +58,27 @@ class FastVideoToVTTProcessor {
     // Initialize LLM translator with credits check and model selection
     const llmInitialized = await this.translator.initialize();
     
-    if (llmInitialized) {
-      // Test LLM connection
-      this.llmAvailable = await this.translator.testConnection();
-    } else {
-      this.llmAvailable = false;
+    if (!llmInitialized) {
+      console.error(colors.red('❌ LLM translator initialization failed'));
+      throw new Error('LLM translator is required - no fallback translations accepted');
     }
     
+    // Test LLM connection
+    this.llmAvailable = await this.translator.testConnection();
+    
     if (!this.llmAvailable) {
-      console.log(colors.yellow('⚠️  Continuing with placeholder translations...'));
+      console.error(colors.red('❌ LLM translator connection test failed'));
+      throw new Error('LLM translator must be working - no placeholder translations accepted');
     }
+
+    console.log(colors.green('✅ LLM translator verified and ready'));
 
     console.log(colors.cyan(`🏃‍♂️ Performance Settings:`));
     console.log(colors.cyan(`   📹 Max Concurrent Videos: ${this.maxConcurrentVideos}`));
     console.log(colors.cyan(`   🌐 Max Concurrent Translations: ${this.maxConcurrentTranslations}`));
     console.log(colors.cyan(`   📦 Translation Batch Size: ${this.batchSize}`));
     console.log(colors.cyan(`   ⏭️  Skip Existing VTTs: ${this.skipExisting}`));
+    console.log(colors.cyan(`   🚫 Translation Fallbacks: DISABLED (strict mode)`));
   }
 
   async authenticate() {
@@ -196,7 +201,7 @@ class FastVideoToVTTProcessor {
   // Batch translate multiple subtitles at once
   async batchTranslateSubtitles(subtitles, targetLanguage, sourceLanguage = 'auto') {
     if (!this.llmAvailable) {
-      return subtitles.map(subtitle => `[${targetLanguage.toUpperCase()}] ${subtitle}`);
+      throw new Error(`LLM translator not available - cannot translate to ${targetLanguage.toUpperCase()}`);
     }
 
     try {
@@ -222,25 +227,43 @@ Translations:`;
         .filter(line => line.length > 0)
         .slice(0, subtitles.length); // Ensure we don't get extra lines
 
-      // If we didn't get enough translations, fill with fallbacks
-      while (translations.length < subtitles.length) {
-        const missingIndex = translations.length;
-        translations.push(`[${targetLanguage.toUpperCase()}] ${subtitles[missingIndex]}`);
+      // Strict validation - must have exactly the right number of translations
+      if (translations.length < subtitles.length) {
+        throw new Error(`Translation incomplete: got ${translations.length} translations for ${subtitles.length} subtitles`);
+      }
+
+      // Validate translations are not just placeholders or copies
+      for (let i = 0; i < translations.length; i++) {
+        const translation = translations[i];
+        const original = subtitles[i];
+        
+        // Check for placeholder patterns
+        if (translation.includes(`[${targetLanguage.toUpperCase()}]`) || 
+            translation === original ||
+            translation.toLowerCase().includes('placeholder') ||
+            translation.toLowerCase().includes('translation') ||
+            translation.length < 3) {
+          throw new Error(`Invalid translation detected for "${original}" -> "${translation}"`);
+        }
       }
 
       console.log(colors.green(`✅ Batch translated ${translations.length} subtitles to ${targetLanguage.toUpperCase()}`));
       return translations;
 
     } catch (error) {
-      console.error(colors.red(`❌ Batch translation failed for ${targetLanguage} after all retries:`, error.message));
-      // Fallback to placeholders
-      return subtitles.map(subtitle => `[${targetLanguage.toUpperCase()}] ${subtitle}`);
+      console.error(colors.red(`❌ Batch translation failed for ${targetLanguage}:`, error.message));
+      // NO FALLBACK - throw the error to fail processing
+      throw error;
     }
   }
 
   // Fast VTT translation using batching
   async translateVTTFast(vttContent, targetLanguage, sourceLanguage = 'auto') {
     console.log(colors.blue(`🌐 Fast translating VTT content to ${targetLanguage.toUpperCase()}...`));
+
+    if (!this.llmAvailable) {
+      throw new Error(`Cannot translate to ${targetLanguage} - LLM translator not available`);
+    }
 
     try {
       const vttLines = vttContent.split('\n');
@@ -269,9 +292,13 @@ Translations:`;
         }
       }
 
+      if (subtitleTexts.length === 0) {
+        throw new Error('No subtitle text found to translate in VTT content');
+      }
+
       console.log(colors.cyan(`📝 Found ${subtitleTexts.length} subtitles to translate`));
 
-      // Batch translate subtitles
+      // Batch translate subtitles - NO FALLBACKS, let errors propagate
       const translations = [];
       for (let i = 0; i < subtitleTexts.length; i += this.batchSize) {
         const batch = subtitleTexts.slice(i, i + this.batchSize);
@@ -280,25 +307,39 @@ Translations:`;
         
         // Small delay between batches for paid models
         if (i + this.batchSize < subtitleTexts.length) {
-          await new Promise(resolve => setTimeout(resolve, 500)); // Reduced to 0.5 seconds
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
+      }
+
+      // Verify we have all translations
+      if (translations.length !== subtitleTexts.length) {
+        throw new Error(`Translation count mismatch: expected ${subtitleTexts.length}, got ${translations.length}`);
       }
 
       // Replace placeholders with actual translations
       let translationIndex = 0;
       for (let i = 0; i < translatedLines.length; i++) {
         if (translatedLines[i] === 'PLACEHOLDER') {
-          translatedLines[i] = translations[translationIndex] || subtitleTexts[translationIndex];
+          translatedLines[i] = translations[translationIndex];
           translationIndex++;
         }
       }
 
       const translatedVTT = translatedLines.join('\n');
-      console.log(colors.green(`✅ Fast VTT translation to ${targetLanguage.toUpperCase()} completed`));
+      
+      // Final validation - ensure the VTT doesn't contain placeholder patterns
+      if (translatedVTT.includes('[AR]') || translatedVTT.includes('[EN]') || 
+          translatedVTT.includes('[FR]') || translatedVTT.includes('[ES]') || 
+          translatedVTT.includes('[IT]') || translatedVTT.includes('PLACEHOLDER')) {
+        throw new Error(`Translation contains placeholder text - not a real translation`);
+      }
+
+      console.log(colors.green(`✅ Fast VTT translation to ${targetLanguage.toUpperCase()} completed and validated`));
       return translatedVTT;
 
     } catch (error) {
       console.error(colors.red(`❌ Fast VTT translation failed:`, error.message));
+      // NO FALLBACK - let the error propagate to fail the video processing
       throw error;
     }
   }
@@ -762,29 +803,76 @@ Translations:`;
   async verifyVideoProcessing(video, filename) {
     const languages = ['ar', 'en', 'fr', 'es', 'it'];
     const missing = [];
+    const invalid = [];
     
-    // Check local VTT files (most important)
+    // Check local VTT files (most important) and validate content
     for (const lang of languages) {
       const vttPath = path.join(this.outputDir, `${filename}_${lang}.vtt`);
       if (!await fs.pathExists(vttPath)) {
         missing.push(`${lang} VTT file`);
+      } else {
+        // Validate VTT content quality
+        try {
+          const vttContent = await fs.readFile(vttPath, 'utf8');
+          
+          // Check for placeholder patterns that indicate failed translation
+          const placeholderPatterns = [
+            `[${lang.toUpperCase()}]`,
+            '[AR]', '[EN]', '[FR]', '[ES]', '[IT]',
+            'PLACEHOLDER',
+            'placeholder',
+            'Translation failed',
+            'translation failed'
+          ];
+          
+          let hasPlaceholders = false;
+          for (const pattern of placeholderPatterns) {
+            if (vttContent.includes(pattern)) {
+              hasPlaceholders = true;
+              break;
+            }
+          }
+          
+          // Check if file is too small (likely empty or minimal content)
+          const stats = await fs.stat(vttPath);
+          const isContentTooSmall = stats.size < 100; // Less than 100 bytes is suspicious
+          
+          // Check if content looks like actual translation (basic heuristic)
+          const subtitleLines = vttContent.split('\n').filter(line => 
+            line.trim() && !line.includes('WEBVTT') && !line.includes('-->')
+          );
+          const hasSubstantialContent = subtitleLines.length > 0 && 
+            subtitleLines.some(line => line.trim().length > 10);
+          
+          if (hasPlaceholders) {
+            invalid.push(`${lang} VTT contains placeholder text`);
+          } else if (isContentTooSmall) {
+            invalid.push(`${lang} VTT file too small (${stats.size} bytes)`);
+          } else if (!hasSubstantialContent) {
+            invalid.push(`${lang} VTT lacks substantial content`);
+          }
+          
+        } catch (error) {
+          invalid.push(`${lang} VTT content validation failed: ${error.message}`);
+        }
       }
     }
     
-    // If local VTT files are complete, that's the main success criteria
-    if (missing.length === 0) {
-      console.log(colors.green(`✅ Video processing verified complete (local VTT files): ${filename}`));
-      
-      // Optional: Check uploaded captions (if upload is enabled) but don't fail if they're missing
-      if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
-        await this.verifyUploadedCaptions(video, filename, languages);
-      }
-      
-      return true;
+    // If any files are missing or invalid, processing is incomplete
+    const allIssues = [...missing, ...invalid];
+    if (allIssues.length > 0) {
+      console.log(colors.red(`❌ Video processing incomplete. Issues: ${allIssues.join(', ')}`));
+      return false;
     }
     
-    console.log(colors.red(`❌ Video processing incomplete. Missing local files: ${missing.join(', ')}`));
-    return false;
+    console.log(colors.green(`✅ Video processing verified complete with valid translations: ${filename}`));
+    
+    // Optional: Check uploaded captions (if upload is enabled) but don't fail if they're missing
+    if (process.env.UPLOAD_CAPTIONS?.toLowerCase() === 'true') {
+      await this.verifyUploadedCaptions(video, filename, languages);
+    }
+    
+    return true;
   }
 
   // Separate method to verify uploaded captions (non-blocking)

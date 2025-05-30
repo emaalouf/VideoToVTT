@@ -1,7 +1,13 @@
 #!/bin/bash
 
-echo "🔄 VideoToVTT Server Sync Helper"
-echo "================================"
+echo "🔄 VideoToVTT Server Sync Helper - STRICT TRANSLATION MODE"
+echo "=========================================================="
+echo ""
+
+echo "⚠️  IMPORTANT: STRICT TRANSLATION MODE ENABLED"
+echo "   🚫 NO FALLBACK translations - LLM must work"
+echo "   🚫 NO PLACEHOLDER text accepted"
+echo "   ✅ Only real, validated translations allowed"
 echo ""
 
 echo "📋 STEPS TO DEPLOY THE FIX:"
@@ -26,6 +32,8 @@ echo "  ✅ Verification now focuses on local VTT files (primary success criteri
 echo "  ✅ Uploaded captions are checked separately and don't block processing"
 echo "  ✅ Added 2-second delay for API sync before caption verification"
 echo "  ✅ More graceful handling of API delays and 404 errors"
+echo "  🚫 REMOVED all translation fallbacks - strict quality enforcement"
+echo "  🔍 Added VTT content validation to reject placeholder translations"
 echo ""
 
 echo "📊 EXPECTED IMPROVEMENT:"
@@ -33,6 +41,23 @@ echo "  • No more 'Video processing verification failed' errors"
 echo "  • Videos marked as complete when VTT files exist locally"
 echo "  • Caption upload issues become warnings, not failures"
 echo "  • Faster processing with fewer retry loops"
+echo "  🎯 ONLY REAL TRANSLATIONS - no placeholders accepted"
+echo "  ❌ Processing will FAIL if translation doesn't work"
+echo ""
+
+echo "🎯 REQUIREMENTS FOR STRICT MODE:"
+echo "  ✅ OpenRouter API key must be valid"
+echo "  ✅ OpenRouter account must have credits"
+echo "  ✅ Selected LLM model must be available"
+echo "  ✅ Network connection must be stable"
+echo "  ❌ If ANY of these fail, processing will stop"
+echo ""
+
+echo "💡 TROUBLESHOOTING:"
+echo "  • Check .env file has correct OPENROUTER_API_KEY"
+echo "  • Verify OpenRouter account has sufficient credits"
+echo "  • Ensure FORCE_PAID_MODEL is set to a working model"
+echo "  • Monitor logs for translation failures"
 echo ""
 
 echo "🎯 IF YOU NEED HELP WITH SERVER DETAILS:"
