@@ -306,30 +306,22 @@ Translation:`;
       throw new Error('OpenRouter API key is required. Please set OPENROUTER_API_KEY or LLM_API_KEY in your environment.');
     }
 
-    const modelToUse = this.selectedModel || this.model || 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+    const modelToUse = this.selectedModel || this.model || 'anthropic/claude-3-haiku';
 
     const response = await axios.post(this.apiUrl, {
       model: modelToUse,
       messages: [
         {
-          role: "system",
-          content: "You are a professional translator. Translate the given text accurately while preserving the original meaning and tone. Return ONLY the translated text without any explanations."
-        },
-        {
           role: "user",
           content: prompt
         }
       ],
-      temperature: 0.2,
-      max_tokens: 1000,
-      top_p: 0.9
+      temperature: 0.1,
+      max_tokens: 200
     }, {
-      timeout: this.timeout,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-        'HTTP-Referer': 'https://github.com/your-username/VideoToVTT',
-        'X-Title': 'VideoToVTT Processor'
+        'Authorization': `Bearer ${this.apiKey}`
       }
     });
 
