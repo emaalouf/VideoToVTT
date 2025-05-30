@@ -59,7 +59,7 @@ export class LLMTranslator {
     // Priority order: Fast paid models first, then free models as fallback
     const modelPriority = [
       // Fast, reliable paid models for translation
-      'anthropic/claude-3-haiku-20240307',           // Very fast, cheap
+      'anthropic/claude-3-haiku',           // Very fast, cheap
       'openai/gpt-4o-mini',                          // Fast and affordable
       'google/gemini-flash-1.5',                     // Fast Google model
       'meta-llama/llama-3.1-8b-instruct',          // Fast Llama
