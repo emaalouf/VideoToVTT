@@ -63,7 +63,7 @@ console.log('');
 
 // Test 2: Simple translation
 console.log('📋 Test 2: Translation Test');
-const testModel = forcedModel || 'anthropic/claude-3-haiku';
+const testModel = forcedModel || 'openai/gpt-4o-mini';
 
 try {
   const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {

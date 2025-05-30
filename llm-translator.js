@@ -306,7 +306,7 @@ Translation:`;
       throw new Error('OpenRouter API key is required. Please set OPENROUTER_API_KEY or LLM_API_KEY in your environment.');
     }
 
-    const modelToUse = this.selectedModel || this.model || 'anthropic/claude-3-haiku';
+    const modelToUse = this.selectedModel || this.model || 'openai/gpt-4o-mini';
 
     const response = await axios.post(this.apiUrl, {
       model: modelToUse,
